@@ -2,6 +2,7 @@ import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
 import random
 import os
+import re
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 from flask import Flask
@@ -64,6 +65,23 @@ class RichBot:
         
         print("✅ Бот Рич (Supabase) запущен!")
     
+    def extract_ref_from_message(self, text):
+        """Извлечь ref из текста сообщения"""
+        # Ищем ref=123 или ?ref=123 или &ref=123
+        patterns = [
+            r'ref[=:]\s*(\d+)',
+            r'\?ref=(\d+)',
+            r'&ref=(\d+)',
+            r'начать\s+ref[=:]\s*(\d+)',
+            r'https?://vk\.com/[^\s]+\?ref=(\d+)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+        return None
+    
     def get_user(self, user_id):
         """Получить или создать пользователя"""
         try:
@@ -105,7 +123,7 @@ class RichBot:
         try:
             self.vk.messages.send(
                 user_id=user_id,
-                message=message[:4000],  # Ограничение длины
+                message=message[:4000],
                 random_id=random.randint(1, 999999)
             )
         except Exception as e:
@@ -138,37 +156,112 @@ class RichBot:
             return True, 0
     
     def generate_referral_link(self, user_id):
-        """Сгенерировать реферальную ссылку"""
+        """Сгенерировать реферальную ссылку с параметром ref"""
         try:
             user_info = self.vk.users.get(user_ids=user_id)[0]
-            return f"https://vk.com/{user_info['screen_name']}"
+            screen_name = user_info['screen_name']
+            return f"https://vk.com/{screen_name}?ref={user_id}"
         except:
-            return f"https://vk.com/id{user_id}"
+            return f"https://vk.com/id{user_id}?ref={user_id}"
+    
+    def process_referral(self, new_user_id, referrer_id):
+        """Обработка реферальной привязки"""
+        if new_user_id == referrer_id:
+            return False
+        
+        # Проверяем, не привязан ли уже
+        new_user = self.get_user(new_user_id)
+        if not new_user:
+            return False
+        
+        if new_user.get('referrer'):
+            return False
+        
+        # Проверяем, существует ли реферер
+        referrer = self.get_user(referrer_id)
+        if not referrer:
+            return False
+        
+        # Привязываем реферала
+        self.update_user(new_user_id, {'referrer': referrer_id})
+        
+        # Начисляем бонусы
+        bonus = 500
+        
+        # Бонус новому игроку
+        self.update_user(new_user_id, {'money': new_user['money'] + bonus})
+        
+        # Бонус рефереру
+        self.update_user(referrer_id, {
+            'money': referrer['money'] + bonus,
+            'referrals_count': referrer['referrals_count'] + 1
+        })
+        
+        # Записываем награду
+        supabase.table('referral_rewards').insert({
+            'referrer_id': referrer_id,
+            'referred_id': new_user_id,
+            'reward_amount': bonus,
+            'claimed': False
+        }).execute()
+        
+        # Проверяем достижения (каждые 5 рефералов)
+        new_count = referrer['referrals_count'] + 1
+        if new_count % 5 == 0:
+            achievement_bonus = 1000
+            self.update_user(referrer_id, {'money': referrer['money'] + achievement_bonus})
+            supabase.table('referral_rewards').insert({
+                'referrer_id': referrer_id,
+                'referred_id': None,
+                'reward_amount': achievement_bonus,
+                'claimed': False
+            }).execute()
+            self.send_message(referrer_id, f"🎉 ДОСТИЖЕНИЕ! Ты пригласил {new_count} друзей и получил +{achievement_bonus} {self.currency_symbol}!")
+        
+        self.send_message(referrer_id, f"🎉 По твоей ссылке зарегистрировался новый игрок! Ты получил +{bonus} {self.currency_symbol}!")
+        self.send_message(new_user_id, f"🎁 Ты получил +{bonus} {self.currency_symbol} за регистрацию по реферальной ссылке!")
+        
+        return True
     
     def get_available_bonus(self, user_id):
         """Получить сумму доступных бонусов за рефералов"""
         try:
             rewards = supabase.table('referral_rewards').select('reward_amount').eq('referrer_id', user_id).eq('claimed', False).execute()
-            
             if not rewards.data:
                 return 0
-            
             return sum(r.get('reward_amount', 0) for r in rewards.data)
         except:
             return 0
     
     def cmd_start(self, user_id, args):
+        # Проверяем наличие реферального параметра в сообщении
+        full_message = ' '.join(args) if args else ''
+        ref_id = self.extract_ref_from_message(full_message)
+        
+        # Если есть реферал и пользователь новый - обрабатываем
+        if ref_id:
+            # Проверяем, существует ли пользователь
+            existing = supabase.table('users').select('*').eq('user_id', user_id).execute()
+            if not existing.data:
+                # Новый пользователь - обрабатываем реферала
+                self.process_referral(user_id, ref_id)
+        
         user = self.get_user(user_id)
         if not user:
             self.send_message(user_id, "❌ Ошибка! Попробуй позже")
             return
-            
+        
+        # Показываем реферальную ссылку в приветствии
+        ref_link = self.generate_referral_link(user_id)
+        
         self.send_message(
             user_id,
             f"🌟 Добро пожаловать в Rich!\n\n"
             f"💰 Баланс: {user['money']}\n"
             f"⚡ Энергия: {user['energy']}%\n"
             f"🏆 Уровень: {user['level']}\n\n"
+            f"🔗 Твоя реферальная ссылка:\n{ref_link}\n"
+            f"📌 Отправь её другу, и вы оба получите +500 монет!\n\n"
             f"📜 Команды:\n"
             f"• баланс - проверка денег\n"
             f"• работы - список работ\n"
@@ -690,15 +783,23 @@ class RichBot:
             if user.get('referrer'):
                 referrer_info = f"\n👤 Пригласил: @id{user['referrer']}"
             
+            ref_link = self.generate_referral_link(user_id)
+            
             self.send_message(
                 user_id,
                 f"🌟 РЕФЕРАЛЬНАЯ СИСТЕМА\n\n"
-                f"🔗 Твоя ссылка: {self.generate_referral_link(user_id)}\n\n"
+                f"🔗 Твоя ссылка:\n{ref_link}\n\n"
                 f"📊 Статистика:\n"
                 f"• Приглашено: {user['referrals_count']}\n"
-                f"• Бонусов: {total_bonus} {self.currency_symbol}{referrer_info}\n\n"
-                f"🎁 реф бонус - забрать бонус\n"
-                f"🏆 реф топ - топ приглашающих"
+                f"• Накоплено бонусов: {total_bonus} {self.currency_symbol}{referrer_info}\n\n"
+                f"💡 Как это работает:\n"
+                f"1. Отправь ссылку другу\n"
+                f"2. Друг переходит по ссылке и пишет 'начать'\n"
+                f"3. Вы оба получаете +500 {self.currency_symbol}\n"
+                f"4. За каждые 5 приглашений +1000 бонусом!\n\n"
+                f"🎁 Команды:\n"
+                f"• реф бонус - забрать накопленный бонус\n"
+                f"• реф топ - топ приглашающих"
             )
             return
         
@@ -708,7 +809,7 @@ class RichBot:
             available = self.get_available_bonus(user_id)
             
             if available <= 0:
-                self.send_message(user_id, "❌ Нет бонусов!")
+                self.send_message(user_id, "❌ Нет доступных бонусов!")
                 return
             
             self.update_user(user_id, {'money': user['money'] + available})
@@ -719,7 +820,7 @@ class RichBot:
             referrers_stats = supabase.table('users').select('user_id, referrals_count').gte('referrals_count', 1).order('referrals_count', desc=True).limit(10).execute()
             
             if not referrers_stats.data:
-                self.send_message(user_id, "📊 Нет приглашений!")
+                self.send_message(user_id, "📊 Пока нет приглашений!")
                 return
             
             text = "🏆 ТОП ПРИГЛАШАЮЩИХ:\n\n"
@@ -727,6 +828,9 @@ class RichBot:
                 text += f"{i}. @id{stat['user_id']} - {stat['referrals_count']} приглашений\n"
             
             self.send_message(user_id, text)
+        
+        else:
+            self.send_message(user_id, "❌ Использование: реф [бонус/топ]")
     
     def cmd_admin(self, user_id, args):
         if user_id != ADMIN_ID:
@@ -735,9 +839,11 @@ class RichBot:
         
         if not args:
             self.send_message(user_id, "👑 Админ команды:\n\n"
-                                      "• админ дать [id] [сумма]\n"
-                                      "• админ бан [id]\n"
-                                      "• админ разбан [id]")
+                                      "• админ дать [id] [сумма] - выдать валюту\n"
+                                      "• админ бан [id] - забанить\n"
+                                      "• админ разбан [id] - разбанить\n"
+                                      "• админ сброс [id] - сбросить прогресс\n"
+                                      "• админ стата - статистика бота")
             return
         
         action = args[0].lower()
@@ -770,6 +876,29 @@ class RichBot:
                 self.send_message(user_id, f"✅ @id{target_id} из ЧС")
             except:
                 self.send_message(user_id, "❌ Ошибка!")
+        
+        elif action == 'сброс' and len(args) >= 2:
+            try:
+                target_id = int(args[1])
+                supabase.table('users').delete().eq('user_id', target_id).execute()
+                supabase.table('clan_members').delete().eq('user_id', target_id).execute()
+                supabase.table('mafia_members').delete().eq('user_id', target_id).execute()
+                self.send_message(user_id, f"✅ Прогресс @id{target_id} сброшен")
+            except:
+                self.send_message(user_id, "❌ Ошибка!")
+        
+        elif action == 'стата':
+            users_count = supabase.table('users').select('*', count='exact').execute()
+            clans_count = supabase.table('clans').select('*', count='exact').execute()
+            
+            self.send_message(
+                user_id,
+                f"📊 СТАТИСТИКА БОТА:\n\n"
+                f"👥 Игроков: {users_count.count}\n"
+                f"🏆 Кланов: {clans_count.count}\n"
+                f"💰 Стартовый капитал: {self.start_money}\n"
+                f"💼 Работ: {len(self.jobs)}"
+            )
     
     def run(self):
         print("🔄 Бот слушает сообщения...")
@@ -781,12 +910,12 @@ class RichBot:
                 if not message_text:
                     continue
                 
-                message_lower = message_text.lower()
-                
                 # Проверка ЧС
                 if self.check_blacklist(user_id):
+                    self.send_message(user_id, "🚫 Ты в черном списке!")
                     continue
                 
+                message_lower = message_text.lower()
                 parts = message_lower.split()
                 command = parts[0]
                 args = parts[1:] if len(parts) > 1 else []
@@ -796,7 +925,7 @@ class RichBot:
                         self.commands[command](user_id, args)
                     except Exception as e:
                         print(f"Ошибка в {command}: {e}")
-                        self.send_message(user_id, "❌ Ошибка!")
+                        self.send_message(user_id, "❌ Ошибка! Попробуй позже")
 
 def run_web_server():
     port = int(os.environ.get('PORT', 10000))
