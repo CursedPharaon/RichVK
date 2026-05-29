@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime, timedelta
 from supabase import create_client, Client
-from flask import Flask
+from flask import Flask, request, redirect, render_template_string
 import threading
 
 # Получаем переменные окружения
@@ -13,16 +13,269 @@ VK_TOKEN = os.environ.get('VK_TOKEN')
 SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 ADMIN_ID = int(os.environ.get('ADMIN_ID', 0))
+VK_GROUP_ID = os.environ.get('VK_GROUP_ID', '')
+BASE_URL = os.environ.get('BASE_URL', 'http://localhost:10000')
 
 # Инициализация Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# HTML шаблон для реферальной страницы
+REFERRAL_PAGE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rich Bot - Реферальная система</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 28px;
+            padding: 40px 30px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+            animation: fadeIn 0.5s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .avatar {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            font-size: 50px;
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.2);
+        }
+        h1 {
+            font-size: 32px;
+            color: #1a1a2e;
+            margin-bottom: 8px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 20px;
+        }
+        .inviter {
+            background: #f0f4ff;
+            padding: 12px 20px;
+            border-radius: 50px;
+            display: inline-block;
+            margin-bottom: 25px;
+            font-size: 16px;
+        }
+        .inviter strong {
+            color: #667eea;
+        }
+        .bonus {
+            background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+            border: 2px solid #22c55e;
+            border-radius: 20px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .bonus p {
+            color: #166534;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+        .bonus span {
+            font-size: 36px;
+            font-weight: bold;
+            color: #22c55e;
+        }
+        .code-block {
+            background: #1a1a2e;
+            border-radius: 16px;
+            padding: 16px;
+            margin: 20px 0;
+            position: relative;
+        }
+        .code {
+            color: #00ff88;
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+            word-break: break-all;
+            text-align: left;
+            padding-right: 40px;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            background: rgba(255,255,255,0.1);
+            border: none;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: 0.2s;
+        }
+        .copy-btn:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        .button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 16px 32px;
+            border-radius: 50px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            margin: 15px 0;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px -5px rgba(102, 126, 234, 0.4);
+        }
+        .steps {
+            text-align: left;
+            background: #f8f9fa;
+            border-radius: 20px;
+            padding: 20px;
+            margin-top: 25px;
+        }
+        .steps h3 {
+            margin-bottom: 15px;
+            color: #1a1a2e;
+        }
+        .steps ol {
+            padding-left: 20px;
+        }
+        .steps li {
+            margin: 12px 0;
+            color: #444;
+            line-height: 1.4;
+        }
+        .steps li::marker {
+            color: #667eea;
+            font-weight: bold;
+        }
+        .footer {
+            margin-top: 20px;
+            color: #888;
+            font-size: 12px;
+        }
+        @media (max-width: 480px) {
+            .card { padding: 30px 20px; }
+            h1 { font-size: 28px; }
+            .bonus span { font-size: 28px; }
+            .code { font-size: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="avatar">🎮</div>
+        <h1>Rich Bot</h1>
+        <div class="subtitle">Экономическая игра ВКонтакте</div>
+        
+        <div class="inviter">
+            👤 Пригласил: <strong>{{ username }}</strong>
+        </div>
+        
+        <div class="bonus">
+            <p>🎁 Твой бонус за регистрацию</p>
+            <span>+500 🪙</span>
+            <p style="margin-top: 8px; font-size: 14px;">и твой друг получит +500 🪙</p>
+        </div>
+        
+        <div class="code-block">
+            <div class="code" id="refCode">начать ref={{ ref_id }}</div>
+            <button class="copy-btn" onclick="copyCode()">📋 Копировать</button>
+        </div>
+        
+        <a href="https://vk.me/{{ bot_screen }}" class="button">
+            💬 Открыть чат с ботом
+        </a>
+        
+        <div class="steps">
+            <h3>📌 Как получить бонус:</h3>
+            <ol>
+                <li>Нажми на кнопку выше, чтобы открыть бота</li>
+                <li>Нажми «Написать сообщение», если нужно</li>
+                <li>Вставь скопированную команду в чат</li>
+                <li>Отправь и получи +500 монет! 🎉</li>
+            </ol>
+        </div>
+        
+        <div class="footer">
+            💡 Бот создан для игры и развлечения
+        </div>
+    </div>
+    
+    <script>
+        function copyCode() {
+            const code = document.getElementById('refCode').innerText;
+            navigator.clipboard.writeText(code).then(() => {
+                const btn = document.querySelector('.copy-btn');
+                const originalText = btn.innerText;
+                btn.innerText = '✅ Скопировано!';
+                setTimeout(() => {
+                    btn.innerText = originalText;
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>
+'''
 
 # Flask приложение для Render
 app = Flask(__name__)
 
 @app.route('/')
 def health_check():
-    return "Бот Рич работает!"
+    return "🤖 Бот Рич работает! Реферальная страница: /ref/ID"
+
+@app.route('/ref/<int:referrer_id>')
+def referral_page(referrer_id):
+    """Страница для реферальной ссылки"""
+    try:
+        # Получаем информацию о приглашающем
+        vk_session = vk_api.VkApi(token=VK_TOKEN)
+        vk = vk_session.get_api()
+        user_info = vk.users.get(user_ids=referrer_id)[0]
+        username = user_info.get('screen_name', f'id{referrer_id}')
+        
+        # Получаем короткий адрес бота
+        bot_info = vk.users.get(user_ids=ADMIN_ID)[0]
+        bot_screen = bot_info.get('screen_name', 'rich_bot')
+        
+        return render_template_string(
+            REFERRAL_PAGE,
+            username=username,
+            ref_id=referrer_id,
+            bot_screen=bot_screen
+        )
+    except Exception as e:
+        return f"<h3>❌ Ошибка</h3><p>Пользователь с ID {referrer_id} не найден</p><a href='/'>На главную</a>", 404
 
 class RichBot:
     def __init__(self):
@@ -64,16 +317,15 @@ class RichBot:
         }
         
         print("✅ Бот Рич (Supabase) запущен!")
+        print(f"🔗 Реферальная ссылка: {BASE_URL}/ref/ВАШ_ID")
     
     def extract_ref_from_message(self, text):
         """Извлечь ref из текста сообщения"""
-        # Ищем ref=123 или ?ref=123 или &ref=123
         patterns = [
             r'ref[=:]\s*(\d+)',
-            r'\?ref=(\d+)',
-            r'&ref=(\d+)',
             r'начать\s+ref[=:]\s*(\d+)',
-            r'https?://vk\.com/[^\s]+\?ref=(\d+)'
+            r'\?ref=(\d+)',
+            r'&ref=(\d+)'
         ]
         
         for pattern in patterns:
@@ -156,13 +408,8 @@ class RichBot:
             return True, 0
     
     def generate_referral_link(self, user_id):
-        """Сгенерировать реферальную ссылку с параметром ref"""
-        try:
-            user_info = self.vk.users.get(user_ids=user_id)[0]
-            screen_name = user_info['screen_name']
-            return f"https://vk.com/{screen_name}?ref={user_id}"
-        except:
-            return f"https://vk.com/id{user_id}?ref={user_id}"
+        """Сгенерировать реферальную ссылку на страницу"""
+        return f"{BASE_URL}/ref/{user_id}"
     
     def process_referral(self, new_user_id, referrer_id):
         """Обработка реферальной привязки"""
@@ -260,7 +507,7 @@ class RichBot:
             f"💰 Баланс: {user['money']}\n"
             f"⚡ Энергия: {user['energy']}%\n"
             f"🏆 Уровень: {user['level']}\n\n"
-            f"🔗 Твоя реферальная ссылка:\n{ref_link}\n"
+            f"🔗 Твоя реферальная ссылка:\n{ref_link}\n\n"
             f"📌 Отправь её другу, и вы оба получите +500 монет!\n\n"
             f"📜 Команды:\n"
             f"• баланс - проверка денег\n"
@@ -794,9 +1041,10 @@ class RichBot:
                 f"• Накоплено бонусов: {total_bonus} {self.currency_symbol}{referrer_info}\n\n"
                 f"💡 Как это работает:\n"
                 f"1. Отправь ссылку другу\n"
-                f"2. Друг переходит по ссылке и пишет 'начать'\n"
-                f"3. Вы оба получаете +500 {self.currency_symbol}\n"
-                f"4. За каждые 5 приглашений +1000 бонусом!\n\n"
+                f"2. Друг переходит и копирует команду\n"
+                f"3. Отправляет команду боту\n"
+                f"4. Вы оба получаете +500 {self.currency_symbol}\n"
+                f"5. За каждые 5 приглашений +1000 бонусом!\n\n"
                 f"🎁 Команды:\n"
                 f"• реф бонус - забрать накопленный бонус\n"
                 f"• реф топ - топ приглашающих"
