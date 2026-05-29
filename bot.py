@@ -865,7 +865,25 @@ class RichBot:
                     except Exception as e:
                         print(f"Ошибка в команде {command}: {e}")
                         self.send_message(user_id, "❌ Ошибка! Попробуй позже")
+# Веб-сервер-заглушка для Render.com
+from flask import Flask
+import threading
+
+app = Flask(__name__)
+
+@app.route('/')
+def health_check():
+    return "Бот Рич работает!"
+
+def run_web_server():
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
 
 if __name__ == "__main__":
+    # Запускаем веб-сервер в отдельном потоке
+    web_thread = threading.Thread(target=run_web_server)
+    web_thread.start()
+    
+    # Запускаем бота
     bot = RichBot()
     bot.run()
