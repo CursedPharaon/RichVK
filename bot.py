@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime, timedelta
 from supabase import create_client, Client
-from flask import Flask, request, redirect, render_template_string
+from flask import Flask, request, render_template_string
 import threading
 
 # Получаем переменные окружения
@@ -13,13 +13,12 @@ VK_TOKEN = os.environ.get('VK_TOKEN')
 SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 ADMIN_ID = int(os.environ.get('ADMIN_ID', 0))
-VK_GROUP_ID = os.environ.get('VK_GROUP_ID', '')
 BASE_URL = os.environ.get('BASE_URL', 'http://localhost:10000')
 
 # Инициализация Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# HTML шаблон для реферальной страницы
+# HTML шаблон для реферальной страницы (упрощенный)
 REFERRAL_PAGE = '''
 <!DOCTYPE html>
 <html>
@@ -28,11 +27,7 @@ REFERRAL_PAGE = '''
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -50,11 +45,6 @@ REFERRAL_PAGE = '''
             width: 100%;
             text-align: center;
             box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
-            animation: fadeIn 0.5s ease;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
         }
         .avatar {
             width: 100px;
@@ -66,28 +56,16 @@ REFERRAL_PAGE = '''
             justify-content: center;
             margin: 0 auto 20px;
             font-size: 50px;
-            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.2);
         }
-        h1 {
-            font-size: 32px;
-            color: #1a1a2e;
-            margin-bottom: 8px;
-        }
-        .subtitle {
-            color: #666;
-            margin-bottom: 20px;
-        }
+        h1 { font-size: 32px; color: #1a1a2e; margin-bottom: 8px; }
         .inviter {
             background: #f0f4ff;
             padding: 12px 20px;
             border-radius: 50px;
             display: inline-block;
             margin-bottom: 25px;
-            font-size: 16px;
         }
-        .inviter strong {
-            color: #667eea;
-        }
+        .inviter strong { color: #667eea; }
         .bonus {
             background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
             border: 2px solid #22c55e;
@@ -95,47 +73,7 @@ REFERRAL_PAGE = '''
             padding: 20px;
             margin: 20px 0;
         }
-        .bonus p {
-            color: #166534;
-            margin-bottom: 10px;
-            font-weight: 500;
-        }
-        .bonus span {
-            font-size: 36px;
-            font-weight: bold;
-            color: #22c55e;
-        }
-        .code-block {
-            background: #1a1a2e;
-            border-radius: 16px;
-            padding: 16px;
-            margin: 20px 0;
-            position: relative;
-        }
-        .code {
-            color: #00ff88;
-            font-family: 'Courier New', monospace;
-            font-size: 16px;
-            word-break: break-all;
-            text-align: left;
-            padding-right: 40px;
-        }
-        .copy-btn {
-            position: absolute;
-            top: 12px;
-            right: 12px;
-            background: rgba(255,255,255,0.1);
-            border: none;
-            color: white;
-            padding: 6px 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: 0.2s;
-        }
-        .copy-btn:hover {
-            background: rgba(255,255,255,0.2);
-        }
+        .bonus span { font-size: 36px; font-weight: bold; color: #22c55e; }
         .button {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -144,16 +82,11 @@ REFERRAL_PAGE = '''
             border-radius: 50px;
             font-size: 18px;
             font-weight: 600;
-            cursor: pointer;
             text-decoration: none;
             display: inline-block;
             margin: 15px 0;
-            transition: transform 0.2s, box-shadow 0.2s;
         }
-        .button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 25px -5px rgba(102, 126, 234, 0.4);
-        }
+        .button:hover { transform: translateY(-2px); }
         .steps {
             text-align: left;
             background: #f8f9fa;
@@ -161,32 +94,15 @@ REFERRAL_PAGE = '''
             padding: 20px;
             margin-top: 25px;
         }
-        .steps h3 {
-            margin-bottom: 15px;
-            color: #1a1a2e;
-        }
-        .steps ol {
-            padding-left: 20px;
-        }
-        .steps li {
-            margin: 12px 0;
-            color: #444;
-            line-height: 1.4;
-        }
-        .steps li::marker {
-            color: #667eea;
-            font-weight: bold;
-        }
-        .footer {
-            margin-top: 20px;
-            color: #888;
-            font-size: 12px;
-        }
-        @media (max-width: 480px) {
-            .card { padding: 30px 20px; }
-            h1 { font-size: 28px; }
-            .bonus span { font-size: 28px; }
-            .code { font-size: 12px; }
+        .steps h3 { margin-bottom: 15px; }
+        .steps li { margin: 12px 0; }
+        .note {
+            background: #fef3c7;
+            border-radius: 12px;
+            padding: 12px;
+            margin-top: 15px;
+            font-size: 14px;
+            color: #92400e;
         }
     </style>
 </head>
@@ -194,7 +110,6 @@ REFERRAL_PAGE = '''
     <div class="card">
         <div class="avatar">🎮</div>
         <h1>Rich Bot</h1>
-        <div class="subtitle">Экономическая игра ВКонтакте</div>
         
         <div class="inviter">
             👤 Пригласил: <strong>{{ username }}</strong>
@@ -203,79 +118,58 @@ REFERRAL_PAGE = '''
         <div class="bonus">
             <p>🎁 Твой бонус за регистрацию</p>
             <span>+500 🪙</span>
-            <p style="margin-top: 8px; font-size: 14px;">и твой друг получит +500 🪙</p>
         </div>
         
-        <div class="code-block">
-            <div class="code" id="refCode">начать ref={{ ref_id }}</div>
-            <button class="copy-btn" onclick="copyCode()">📋 Копировать</button>
-        </div>
-        
-        <a href="https://vk.me/{{ bot_screen }}" class="button">
-            💬 Открыть чат с ботом
+        <a href="https://vk.me/game.botrich" class="button">
+            💬 Перейти в чат бота
         </a>
         
         <div class="steps">
             <h3>📌 Как получить бонус:</h3>
             <ol>
-                <li>Нажми на кнопку выше, чтобы открыть бота</li>
-                <li>Нажми «Написать сообщение», если нужно</li>
-                <li>Вставь скопированную команду в чат</li>
-                <li>Отправь и получи +500 монет! 🎉</li>
+                <li>Нажми на кнопку выше</li>
+                <li>Напиши боту любое сообщение</li>
+                <li>Бот автоматически начислит +500 монет!</li>
             </ol>
         </div>
         
-        <div class="footer">
-            💡 Бот создан для игры и развлечения
+        <div class="note">
+            ⚡ Бонус начисляется автоматически при первом сообщении боту
         </div>
     </div>
     
     <script>
-        function copyCode() {
-            const code = document.getElementById('refCode').innerText;
-            navigator.clipboard.writeText(code).then(() => {
-                const btn = document.querySelector('.copy-btn');
-                const originalText = btn.innerText;
-                btn.innerText = '✅ Скопировано!';
-                setTimeout(() => {
-                    btn.innerText = originalText;
-                }, 2000);
-            });
-        }
+        // Сохраняем реферала в localStorage и sessionStorage
+        localStorage.setItem('ref_id', '{{ ref_id }}');
+        sessionStorage.setItem('ref_id', '{{ ref_id }}');
     </script>
 </body>
 </html>
 '''
 
-# Flask приложение для Render
+# Flask приложение
 app = Flask(__name__)
 
 @app.route('/')
 def health_check():
-    return "🤖 Бот Рич работает! Реферальная страница: /ref/ID"
+    return "🤖 Бот Рич работает!"
 
 @app.route('/ref/<int:referrer_id>')
 def referral_page(referrer_id):
     """Страница для реферальной ссылки"""
     try:
-        # Получаем информацию о приглашающем
         vk_session = vk_api.VkApi(token=VK_TOKEN)
         vk = vk_session.get_api()
         user_info = vk.users.get(user_ids=referrer_id)[0]
         username = user_info.get('screen_name', f'id{referrer_id}')
         
-        # Получаем короткий адрес бота
-        bot_info = vk.users.get(user_ids=ADMIN_ID)[0]
-        bot_screen = bot_info.get('screen_name', 'rich_bot')
-        
         return render_template_string(
             REFERRAL_PAGE,
             username=username,
-            ref_id=referrer_id,
-            bot_screen=bot_screen
+            ref_id=referrer_id
         )
     except Exception as e:
-        return f"<h3>❌ Ошибка</h3><p>Пользователь с ID {referrer_id} не найден</p><a href='/'>На главную</a>", 404
+        return f"<h3>❌ Ошибка</h3><p>Пользователь не найден</p>", 404
 
 class RichBot:
     def __init__(self):
@@ -286,7 +180,9 @@ class RichBot:
         self.start_money = 1000
         self.currency_symbol = "💰 Ричей"
         
-        # Конфиг работ
+        # Хранилище ожидающих рефералов (временное)
+        self.pending_refs = {}
+        
         self.jobs = {
             'программист': {'money': (500, 1000), 'energy': 20},
             'грузчик': {'money': (200, 500), 'energy': 15},
@@ -295,7 +191,6 @@ class RichBot:
             'шаурмист': {'money': (400, 700), 'energy': 20}
         }
         
-        # Команды
         self.commands = {
             'начать': self.cmd_start,
             'баланс': self.cmd_balance,
@@ -319,28 +214,11 @@ class RichBot:
         print("✅ Бот Рич (Supabase) запущен!")
         print(f"🔗 Реферальная ссылка: {BASE_URL}/ref/ВАШ_ID")
     
-    def extract_ref_from_message(self, text):
-        """Извлечь ref из текста сообщения"""
-        patterns = [
-            r'ref[=:]\s*(\d+)',
-            r'начать\s+ref[=:]\s*(\d+)',
-            r'\?ref=(\d+)',
-            r'&ref=(\d+)'
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                return int(match.group(1))
-        return None
-    
     def get_user(self, user_id):
-        """Получить или создать пользователя"""
         try:
             result = supabase.table('users').select('*').eq('user_id', user_id).execute()
             
             if not result.data:
-                # Создаем нового пользователя
                 new_user = {
                     'user_id': user_id,
                     'money': self.start_money,
@@ -364,14 +242,12 @@ class RichBot:
             return None
     
     def update_user(self, user_id, data):
-        """Обновить данные пользователя"""
         try:
             supabase.table('users').update(data).eq('user_id', user_id).execute()
         except Exception as e:
             print(f"Ошибка update_user: {e}")
     
     def send_message(self, user_id, message):
-        """Отправить сообщение"""
         try:
             self.vk.messages.send(
                 user_id=user_id,
@@ -382,7 +258,6 @@ class RichBot:
             print(f"Ошибка отправки: {e}")
     
     def check_blacklist(self, user_id):
-        """Проверка в черном списке"""
         try:
             result = supabase.table('blacklist').select('*').eq('user_id', user_id).execute()
             return len(result.data) > 0
@@ -390,7 +265,6 @@ class RichBot:
             return False
     
     def check_cooldown(self, user_id, action, minutes):
-        """Проверка кулдауна"""
         try:
             user = self.get_user(user_id)
             if not user:
@@ -408,15 +282,12 @@ class RichBot:
             return True, 0
     
     def generate_referral_link(self, user_id):
-        """Сгенерировать реферальную ссылку на страницу"""
         return f"{BASE_URL}/ref/{user_id}"
     
     def process_referral(self, new_user_id, referrer_id):
-        """Обработка реферальной привязки"""
         if new_user_id == referrer_id:
             return False
         
-        # Проверяем, не привязан ли уже
         new_user = self.get_user(new_user_id)
         if not new_user:
             return False
@@ -424,27 +295,20 @@ class RichBot:
         if new_user.get('referrer'):
             return False
         
-        # Проверяем, существует ли реферер
         referrer = self.get_user(referrer_id)
         if not referrer:
             return False
         
-        # Привязываем реферала
         self.update_user(new_user_id, {'referrer': referrer_id})
         
-        # Начисляем бонусы
         bonus = 500
         
-        # Бонус новому игроку
         self.update_user(new_user_id, {'money': new_user['money'] + bonus})
-        
-        # Бонус рефереру
         self.update_user(referrer_id, {
             'money': referrer['money'] + bonus,
             'referrals_count': referrer['referrals_count'] + 1
         })
         
-        # Записываем награду
         supabase.table('referral_rewards').insert({
             'referrer_id': referrer_id,
             'referred_id': new_user_id,
@@ -452,7 +316,6 @@ class RichBot:
             'claimed': False
         }).execute()
         
-        # Проверяем достижения (каждые 5 рефералов)
         new_count = referrer['referrals_count'] + 1
         if new_count % 5 == 0:
             achievement_bonus = 1000
@@ -471,7 +334,6 @@ class RichBot:
         return True
     
     def get_available_bonus(self, user_id):
-        """Получить сумму доступных бонусов за рефералов"""
         try:
             rewards = supabase.table('referral_rewards').select('reward_amount').eq('referrer_id', user_id).eq('claimed', False).execute()
             if not rewards.data:
@@ -481,24 +343,11 @@ class RichBot:
             return 0
     
     def cmd_start(self, user_id, args):
-        # Проверяем наличие реферального параметра в сообщении
-        full_message = ' '.join(args) if args else ''
-        ref_id = self.extract_ref_from_message(full_message)
-        
-        # Если есть реферал и пользователь новый - обрабатываем
-        if ref_id:
-            # Проверяем, существует ли пользователь
-            existing = supabase.table('users').select('*').eq('user_id', user_id).execute()
-            if not existing.data:
-                # Новый пользователь - обрабатываем реферала
-                self.process_referral(user_id, ref_id)
-        
         user = self.get_user(user_id)
         if not user:
-            self.send_message(user_id, "❌ Ошибка! Попробуй позже")
+            self.send_message(user_id, "❌ Ошибка!")
             return
         
-        # Показываем реферальную ссылку в приветствии
         ref_link = self.generate_referral_link(user_id)
         
         self.send_message(
@@ -565,7 +414,6 @@ class RichBot:
             self.send_message(user_id, f"✅ Ты устроился на {job_name}!")
             return
         
-        # Проверка кулдауна
         can_work, remaining = self.check_cooldown(user_id, 'work', 10)
         if not can_work:
             self.send_message(user_id, f"⏰ Отдыхай! Следующая работа через {remaining} мин")
@@ -575,7 +423,6 @@ class RichBot:
             self.send_message(user_id, f"❌ Мало энергии! Нужно {self.jobs[job_name]['energy']}")
             return
         
-        # Работаем
         earned = random.randint(*self.jobs[job_name]['money'])
         new_money = user['money'] + earned
         new_energy = user['energy'] - self.jobs[job_name]['energy']
@@ -628,7 +475,7 @@ class RichBot:
         result = ""
         new_money = user['money']
         
-        if game == "орёл_решка":
+        if game == "орёл_решка" or game == "орел_решка":
             if len(args) < 3:
                 self.send_message(user_id, "❌ Укажи орёл или решка!")
                 return
@@ -677,7 +524,6 @@ class RichBot:
         
         clan_name = ' '.join(args)
         
-        # Проверка существования клана
         existing = supabase.table('clans').select('*').eq('name', clan_name).execute()
         if existing.data:
             self.send_message(user_id, "❌ Клан уже есть!")
@@ -695,7 +541,6 @@ class RichBot:
             self.send_message(user_id, f"❌ Нужно 5000! У тебя {user['money']}")
             return
         
-        # Создаем клан
         supabase.table('clans').insert({
             'name': clan_name,
             'owner': user_id,
@@ -721,7 +566,6 @@ class RichBot:
         
         clan_name = ' '.join(args)
         
-        # Проверка существования
         clan = supabase.table('clans').select('*').eq('name', clan_name).execute()
         if not clan.data:
             self.send_message(user_id, "❌ Клан не найден!")
@@ -735,7 +579,6 @@ class RichBot:
             self.send_message(user_id, "❌ Ты уже в клане!")
             return
         
-        # Вступаем
         supabase.table('clan_members').insert({
             'clan_name': clan_name,
             'user_id': user_id
@@ -805,18 +648,15 @@ class RichBot:
             self.send_message(user_id, "❌ Ты уже в мафии!")
             return
         
-        # Проверяем или создаем мафию
         mafia = supabase.table('mafia').select('*').eq('name', mafia_name).execute()
         
         if not mafia.data:
-            # Создаем новую мафию
             supabase.table('mafia').insert({
                 'name': mafia_name,
                 'boss': user_id,
                 'money': 0
             }).execute()
         
-        # Добавляем участника
         supabase.table('mafia_members').insert({
             'mafia_name': mafia_name,
             'user_id': user_id
@@ -847,13 +687,11 @@ class RichBot:
             self.send_message(user_id, "❌ Ошибка!")
             return
         
-        # Проверка кулдауна
         can_rob, remaining = self.check_cooldown(user_id, 'rob', 30)
         if not can_rob:
             self.send_message(user_id, f"⏰ Следующий грабеж через {remaining} мин")
             return
         
-        # Шанс успеха
         success = random.random() < 0.6
         
         if success:
@@ -870,7 +708,6 @@ class RichBot:
             self.send_message(user_id, f"🔫 Успешно! Ты ограбил @id{target_id} на {rob_amount}!")
             self.send_message(target_id, f"⚠️ Тебя ограбил @id{user_id} на {rob_amount}!")
         else:
-            # Штраф за провал
             penalty = random.randint(50, 150)
             new_money = max(0, user['money'] - penalty)
             
@@ -907,7 +744,6 @@ class RichBot:
             self.send_message(user_id, f"❌ Неверная ставка! У тебя {user['money']}")
             return
         
-        # Создаем дуэль
         supabase.table('duels').insert({
             'challenger': user_id,
             'opponent': opponent_id,
@@ -933,7 +769,6 @@ class RichBot:
             self.send_message(user_id, "❌ Ставка должна быть числом!")
             return
         
-        # Ищем дуэль
         duel = supabase.table('duels').select('*').eq('opponent', user_id).eq('bet', bet).eq('status', 'pending').execute()
         
         if not duel.data:
@@ -954,22 +789,18 @@ class RichBot:
             self.send_message(user_id, f"❌ Не хватает денег! Нужно {bet}")
             return
         
-        # Забираем ставки
         self.update_user(challenger_id, {'money': challenger['money'] - bet})
         self.update_user(user_id, {'money': opponent['money'] - bet})
         
-        # Дуэль
         challenger_power = random.randint(1, 100) + challenger['level'] * 5
         opponent_power = random.randint(1, 100) + opponent['level'] * 5
         
         winner_id = challenger_id if challenger_power > opponent_power else user_id
         winner_prize = bet * 2
         
-        # Обновляем победителя
         winner = self.get_user(winner_id)
         self.update_user(winner_id, {'money': winner['money'] + winner_prize})
         
-        # Обновляем статистику
         if winner_id == challenger_id:
             self.update_user(challenger_id, {'duels_won': challenger['duels_won'] + 1})
             self.update_user(user_id, {'duels_lost': opponent['duels_lost'] + 1})
@@ -977,7 +808,6 @@ class RichBot:
             self.update_user(user_id, {'duels_won': opponent['duels_won'] + 1})
             self.update_user(challenger_id, {'duels_lost': challenger['duels_lost'] + 1})
         
-        # Закрываем дуэль
         supabase.table('duels').update({'status': 'completed'}).eq('duel_id', duel_data['duel_id']).execute()
         
         self.send_message(user_id, f"⚔️ ПОБЕДИТЕЛЬ: @id{winner_id}\n💰 Выигрыш: {winner_prize}")
@@ -994,7 +824,6 @@ class RichBot:
             self.send_message(user_id, "❌ Ставка должна быть числом!")
             return
         
-        # Закрываем дуэль
         result = supabase.table('duels').update({'status': 'declined'}).eq('opponent', user_id).eq('bet', bet).eq('status', 'pending').execute()
         
         if result.data:
@@ -1016,7 +845,6 @@ class RichBot:
         self.send_message(user_id, text)
     
     def cmd_ref(self, user_id, args):
-        """Реферальная система"""
         user = self.get_user(user_id)
         if not user:
             return
@@ -1039,18 +867,10 @@ class RichBot:
                 f"📊 Статистика:\n"
                 f"• Приглашено: {user['referrals_count']}\n"
                 f"• Накоплено бонусов: {total_bonus} {self.currency_symbol}{referrer_info}\n\n"
-                f"💡 Как это работает:\n"
-                f"1. Отправь ссылку другу\n"
-                f"2. Друг переходит и копирует команду\n"
-                f"3. Отправляет команду боту\n"
-                f"4. Вы оба получаете +500 {self.currency_symbol}\n"
-                f"5. За каждые 5 приглашений +1000 бонусом!\n\n"
-                f"🎁 Команды:\n"
-                f"• реф бонус - забрать накопленный бонус\n"
-                f"• реф топ - топ приглашающих"
+                f"🎁 реф бонус - забрать бонус\n"
+                f"🏆 реф топ - топ приглашающих"
             )
-            return
-        
+            return        
         subcmd = args[0].lower()
         
         if subcmd == "бонус":
@@ -1087,11 +907,11 @@ class RichBot:
         
         if not args:
             self.send_message(user_id, "👑 Админ команды:\n\n"
-                                      "• админ дать [id] [сумма] - выдать валюту\n"
-                                      "• админ бан [id] - забанить\n"
-                                      "• админ разбан [id] - разбанить\n"
-                                      "• админ сброс [id] - сбросить прогресс\n"
-                                      "• админ стата - статистика бота")
+                                      "• админ дать [id] [сумма]\n"
+                                      "• админ бан [id]\n"
+                                      "• админ разбан [id]\n"
+                                      "• админ сброс [id]\n"
+                                      "• админ стата")
             return
         
         action = args[0].lower()
@@ -1158,9 +978,7 @@ class RichBot:
                 if not message_text:
                     continue
                 
-                # Проверка ЧС
                 if self.check_blacklist(user_id):
-                    self.send_message(user_id, "🚫 Ты в черном списке!")
                     continue
                 
                 message_lower = message_text.lower()
@@ -1173,18 +991,16 @@ class RichBot:
                         self.commands[command](user_id, args)
                     except Exception as e:
                         print(f"Ошибка в {command}: {e}")
-                        self.send_message(user_id, "❌ Ошибка! Попробуй позже")
+                        self.send_message(user_id, "❌ Ошибка!")
 
 def run_web_server():
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == "__main__":
-    # Запускаем веб-сервер в отдельном потоке
     web_thread = threading.Thread(target=run_web_server)
     web_thread.daemon = True
     web_thread.start()
     
-    # Запускаем бота
     bot = RichBot()
     bot.run()
