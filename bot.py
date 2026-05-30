@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime, timedelta
 from supabase import create_client, Client
-from flask import Flask, request, render_template_string
+from flask import Flask, render_template_string
 import threading
 
 # Получаем переменные окружения
@@ -18,7 +18,7 @@ BASE_URL = os.environ.get('BASE_URL', 'http://localhost:10000')
 # Инициализация Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# HTML шаблон для реферальной страницы (упрощенный)
+# HTML шаблон для реферальной страницы
 REFERRAL_PAGE = '''
 <!DOCTYPE html>
 <html>
@@ -137,12 +137,6 @@ REFERRAL_PAGE = '''
             ⚡ Бонус начисляется автоматически при первом сообщении боту
         </div>
     </div>
-    
-    <script>
-        // Сохраняем реферала в localStorage и sessionStorage
-        localStorage.setItem('ref_id', '{{ ref_id }}');
-        sessionStorage.setItem('ref_id', '{{ ref_id }}');
-    </script>
 </body>
 </html>
 '''
@@ -152,7 +146,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def health_check():
-    return "🤖 Бот Рич работает!"
+    return "🤖 Бот Рич работает! Используй /ref/ID для реферальной ссылки"
 
 @app.route('/ref/<int:referrer_id>')
 def referral_page(referrer_id):
@@ -180,7 +174,16 @@ class RichBot:
         self.start_money = 1000
         self.currency_symbol = "💰 Ричей"
         
-        # Хранилище ожидающих рефералов (временное)
+        # Получаем информацию о боте
+        try:
+            bot_info = self.vk.users.get()[0]
+            self.bot_id = bot_info['id']
+            self.bot_screen_name = bot_info.get('screen_name', 'rich_bot')
+        except:
+            self.bot_id = 0
+            self.bot_screen_name = 'rich_bot'
+        
+        # Хранилище ожидающих рефералов
         self.pending_refs = {}
         
         self.jobs = {
@@ -208,11 +211,31 @@ class RichBot:
             'отклонить_дуэль': self.cmd_decline_duel,
             'топ': self.cmd_top,
             'реф': self.cmd_ref,
-            'админ': self.cmd_admin
+            'админ': self.cmd_admin,
+            'помощь': self.cmd_help,
+            'команды': self.cmd_help
         }
         
         print("✅ Бот Рич (Supabase) запущен!")
+        print(f"🤖 ID бота: {self.bot_id}")
+        print(f"📝 Короткое имя: {self.bot_screen_name}")
         print(f"🔗 Реферальная ссылка: {BASE_URL}/ref/ВАШ_ID")
+        print(f"💬 В беседах используй ! или @{self.bot_screen_name} перед командой")
+    
+    def extract_ref_from_text(self, text):
+        """Извлечь ref из текста сообщения"""
+        patterns = [
+            r'ref[=:]\s*(\d+)',
+            r'начать\s+ref[=:]\s*(\d+)',
+            r'\?ref=(\d+)',
+            r'&ref=(\d+)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+        return None
     
     def get_user(self, user_id):
         try:
@@ -342,10 +365,39 @@ class RichBot:
         except:
             return 0
     
+    def cmd_help(self, user_id, args):
+        self.send_message(
+            user_id,
+            f"📜 КОМАНДЫ БОТА RICH:\n\n"
+            f"💰 баланс - проверить баланс\n"
+            f"💼 работы - список работ\n"
+            f"💪 работа [название] - работать\n"
+            f"🎰 казино [орёл_решка/кости] [ставка] - играть\n"
+            f"👥 создать_клан [название]\n"
+            f"🤝 вступить [клан]\n"
+            f"🏆 клан - инфо о клане\n"
+            f"🔫 мафия - инфо о мафии\n"
+            f"🔫 вступить_в_мафию [название]\n"
+            f"⚔️ дуэль [id] [ставка]\n"
+            f"💀 ограбить [id]\n"
+            f"🌟 реф - реферальная система\n"
+            f"📊 топ - топ игроков\n\n"
+            f"💡 В беседах используй ! перед командой или @{self.bot_screen_name}"
+        )
+    
     def cmd_start(self, user_id, args):
+        # Проверяем наличие реферального параметра
+        full_message = ' '.join(args) if args else ''
+        ref_id = self.extract_ref_from_text(full_message)
+        
+        if ref_id:
+            existing = supabase.table('users').select('*').eq('user_id', user_id).execute()
+            if not existing.data:
+                self.process_referral(user_id, ref_id)
+        
         user = self.get_user(user_id)
         if not user:
-            self.send_message(user_id, "❌ Ошибка!")
+            self.send_message(user_id, "❌ Ошибка! Попробуй позже")
             return
         
         ref_link = self.generate_referral_link(user_id)
@@ -358,17 +410,8 @@ class RichBot:
             f"🏆 Уровень: {user['level']}\n\n"
             f"🔗 Твоя реферальная ссылка:\n{ref_link}\n\n"
             f"📌 Отправь её другу, и вы оба получите +500 монет!\n\n"
-            f"📜 Команды:\n"
-            f"• баланс - проверка денег\n"
-            f"• работы - список работ\n"
-            f"• работа [название] - работать\n"
-            f"• казино [игра] [ставка] - играть\n"
-            f"• создать_клан [название]\n"
-            f"• вступить [клан]\n"
-            f"• дуэль [id] [ставка]\n"
-            f"• ограбить [id]\n"
-            f"• реф - реферальная система\n"
-            f"• топ - таблица лидеров"
+            f"📜 Команды: помощь или команды\n"
+            f"💡 В беседах используй ! перед командой или @{self.bot_screen_name}"
         )
     
     def cmd_balance(self, user_id, args):
@@ -475,7 +518,7 @@ class RichBot:
         result = ""
         new_money = user['money']
         
-        if game == "орёл_решка" or game == "орел_решка":
+        if game in ["орёл_решка", "орел_решка"]:
             if len(args) < 3:
                 self.send_message(user_id, "❌ Укажи орёл или решка!")
                 return
@@ -870,7 +913,8 @@ class RichBot:
                 f"🎁 реф бонус - забрать бонус\n"
                 f"🏆 реф топ - топ приглашающих"
             )
-            return        
+            return
+        
         subcmd = args[0].lower()
         
         if subcmd == "бонус":
@@ -970,37 +1014,76 @@ class RichBot:
     
     def run(self):
         print("🔄 Бот слушает сообщения...")
+        print("💡 В беседах используй ! или @ перед командой")
+        
         for event in self.longpoll.listen():
-            if event.type == VkEventType.MESSAGE_NEW and event.to_me:
+            if event.type == VkEventType.MESSAGE_NEW:
+                # Пропускаем сообщения от самого бота
+                if event.user_id == self.bot_id:
+                    continue
+                
                 user_id = event.user_id
+                peer_id = event.peer_id
                 message_text = event.text.strip()
                 
                 if not message_text:
                     continue
                 
+                # Определяем, нужно ли обрабатывать сообщение
+                should_process = False
+                clean_message = message_text
+                
+                # Личное сообщение
+                if peer_id == user_id:
+                    should_process = True
+                # Беседа
+                else:
+                    # Проверяем начинается ли с !
+                    if message_text.startswith('!'):
+                        clean_message = message_text[1:].strip()
+                        should_process = True
+                    # Проверяем упоминание бота
+                    elif f"@{self.bot_screen_name}" in message_text.lower():
+                        clean_message = message_text.lower().replace(f"@{self.bot_screen_name}", "").strip()
+                        should_process = True
+                    # Проверяем команду без префикса в беседе (только определенные команды)
+                    elif message_text.lower().split()[0] in ['баланс', 'топ', 'помощь', 'команды']:
+                        should_process = True
+                        clean_message = message_text
+                
+                if not should_process:
+                    continue
+                
+                # Проверка ЧС
                 if self.check_blacklist(user_id):
                     continue
                 
-                message_lower = message_text.lower()
-                parts = message_lower.split()
+                # Обработка команды
+                parts = clean_message.lower().split()
+                if not parts:
+                    continue
+                
                 command = parts[0]
                 args = parts[1:] if len(parts) > 1 else []
                 
                 if command in self.commands:
                     try:
+                        print(f"📩 Команда от @id{user_id}: {command}")
                         self.commands[command](user_id, args)
                     except Exception as e:
-                        print(f"Ошибка в {command}: {e}")
-                        self.send_message(user_id, "❌ Ошибка!")
+                        print(f"❌ Ошибка в {command}: {e}")
+                        self.send_message(user_id, "❌ Ошибка! Попробуй позже")
 
 def run_web_server():
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == "__main__":
+    # Запускаем веб-сервер в отдельном потоке
     web_thread = threading.Thread(target=run_web_server)
     web_thread.daemon = True
     web_thread.start()
     
+    # Запускаем бота
     bot = RichBot()
     bot.run()
