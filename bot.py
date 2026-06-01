@@ -87,6 +87,7 @@ class RichBot:
             'казино': self.cmd_casino,
             'создать_клан': self.cmd_create_clan,
             'вступить': self.cmd_join_clan,
+            'покинуть_клан': self.cmd_leave_clan,
             'клан': self.cmd_clan_info,
             'мафия': self.cmd_mafia,
             'вступить_в_мафию': self.cmd_join_mafia,
@@ -797,6 +798,51 @@ class RichBot:
         
         self.update_user(user_id, {'clan': clan_name})
         self.send_message(peer_id, f"✅ @id{user_id} вступил в клан '{clan_name}'!")
+
+    def cmd_leave_clan(self, peer_id, user_id, args):
+    """!покинуть_клан - выйти из текущего клана"""
+    user = self.get_user(user_id)
+    
+    if not user:
+        self.send_message(peer_id, "❌ Ошибка! Попробуй позже")
+        return
+    
+    if not user['clan']:
+        self.send_message(peer_id, "❌ Вы не состоите в клане!")
+        return
+    
+    clan_name = user['clan']
+    
+    # Проверяем, является ли пользователь владельцем клана
+    clan = supabase.table('clans').select('*').eq('name', clan_name).execute()
+    
+    if clan.data and clan.data[0]['owner'] == user_id:
+        # Владелец не может просто выйти, нужно либо передать владение, либо распустить клан
+        members = supabase.table('clan_members').select('*').eq('clan_name', clan_name).execute()
+        
+        if len(members.data) > 1:
+            # Есть другие участники — передаём владение случайному
+            other_members = [m for m in members.data if m['user_id'] != user_id]
+            if other_members:
+                new_owner_id = other_members[0]['user_id']
+                supabase.table('clans').update({'owner': new_owner_id}).eq('name', clan_name).execute()
+                self.send_message(peer_id, f"👑 Вы покинули клан '{clan_name}'!\n"
+                                           f"🏆 Новый владелец: @id{new_owner_id}")
+            else:
+                self.send_message(peer_id, "❌ Ошибка при передаче клана!")
+                return
+        else:
+            # В клане только владелец — удаляем клан
+            supabase.table('clans').delete().eq('name', clan_name).execute()
+            supabase.table('clan_members').delete().eq('clan_name', clan_name).execute()
+            self.send_message(peer_id, f"✅ Клан '{clan_name}' распущен, так как вы были единственным участником!")
+    else:
+        # Обычный участник — просто выходим
+        supabase.table('clan_members').delete().eq('clan_name', clan_name).eq('user_id', user_id).execute()
+        self.send_message(peer_id, f"✅ @id{user_id} покинул клан '{clan_name}'!")
+    
+    # Обновляем данные пользователя
+    self.update_user(user_id, {'clan': None})
     
     def cmd_clan_info(self, peer_id, user_id, args):
         user = self.get_user(user_id)
