@@ -87,8 +87,9 @@ class RichBot:
             'казино': self.cmd_casino,
             'создать_клан': self.cmd_create_clan,
             'вступить': self.cmd_join_clan,
-            'покинуть_клан': self.cmd_leave_clan,
             'клан': self.cmd_clan_info,
+            'покинуть_клан': self.cmd_leave_clan,
+            'выйти_из_клана': self.cmd_leave_clan,
             'мафия': self.cmd_mafia,
             'вступить_в_мафию': self.cmd_join_mafia,
             'ограбить': self.cmd_rob,
@@ -111,7 +112,7 @@ class RichBot:
         }
         
         print("✅ Бот Рич (Supabase) запущен и готов к работе!")
-        print(f"💬 В беседах используй ! или @{self.bot_screen_name} перед командой")
+        print(f"💬 В беседах используй ! перед командой")
     
     def get_user(self, user_id):
         try:
@@ -355,7 +356,6 @@ class RichBot:
         return True, cloth['name']
     
     def cmd_wardrobe(self, peer_id, user_id, args):
-        """!шкаф - показать только свою одежду"""
         user_clothes = self.get_user_clothes(user_id)
         
         if not user_clothes:
@@ -541,6 +541,209 @@ class RichBot:
         self.send_message(peer_id, f"📢 РАССЫЛКА ОТ АДМИНА:\n\n{text}")
         self.send_message(peer_id, f"✅ Рассылка отправлена в личку {sent_count} пользователям и в этот чат!")
     
+    # ============================ КОМАНДЫ КЛАНА ============================
+    def cmd_create_clan(self, peer_id, user_id, args):
+        if not args:
+            self.send_message(peer_id, "❌ Название клана!")
+            return
+        
+        clan_name = ' '.join(args)
+        
+        existing = supabase.table('clans').select('*').eq('name', clan_name).execute()
+        if existing.data:
+            self.send_message(peer_id, "❌ Клан уже есть!")
+            return
+        
+        user = self.get_user(user_id)
+        if not user:
+            return
+        
+        if user['clan']:
+            self.send_message(peer_id, "❌ Ты уже в клане!")
+            return
+        
+        if user['money'] < 5000:
+            self.send_message(peer_id, f"❌ Нужно 5000! У тебя {user['money']}")
+            return
+        
+        supabase.table('clans').insert({
+            'name': clan_name,
+            'owner': user_id,
+            'money': 0
+        }).execute()
+        
+        supabase.table('clan_members').insert({
+            'clan_name': clan_name,
+            'user_id': user_id
+        }).execute()
+        
+        self.update_user(user_id, {
+            'money': user['money'] - 5000,
+            'clan': clan_name
+        })
+        
+        self.send_message(peer_id, f"✅ Клан '{clan_name}' создан! Владелец: @id{user_id}")
+    
+    def cmd_join_clan(self, peer_id, user_id, args):
+        if not args:
+            self.send_message(peer_id, "❌ Название клана!")
+            return
+        
+        clan_name = ' '.join(args)
+        
+        clan = supabase.table('clans').select('*').eq('name', clan_name).execute()
+        if not clan.data:
+            self.send_message(peer_id, "❌ Клан не найден!")
+            return
+        
+        user = self.get_user(user_id)
+        if not user:
+            return
+        
+        if user['clan']:
+            self.send_message(peer_id, "❌ Ты уже в клане!")
+            return
+        
+        supabase.table('clan_members').insert({
+            'clan_name': clan_name,
+            'user_id': user_id
+        }).execute()
+        
+        self.update_user(user_id, {'clan': clan_name})
+        self.send_message(peer_id, f"✅ @id{user_id} вступил в клан '{clan_name}'!")
+    
+    def cmd_clan_info(self, peer_id, user_id, args):
+        user = self.get_user(user_id)
+        if not user:
+            return
+        
+        if not user['clan']:
+            self.send_message(peer_id, "❌ Ты не в клане!")
+            return
+        
+        clan = supabase.table('clans').select('*').eq('name', user['clan']).execute()
+        members = supabase.table('clan_members').select('*').eq('clan_name', user['clan']).execute()
+        
+        if not clan.data:
+            self.send_message(peer_id, "❌ Клан не найден!")
+            return
+        
+        clan_data = clan.data[0]
+        
+        self.send_message(
+            peer_id,
+            f"🏆 Клан: {user['clan']}\n"
+            f"👑 Владелец: @id{clan_data['owner']}\n"
+            f"👥 Участников: {len(members.data)}\n"
+            f"💰 Казна: {clan_data['money']}\n"
+            f"📅 Создан: {clan_data['created_at'][:10]}"
+        )
+    
+    def cmd_leave_clan(self, peer_id, user_id, args):
+        """!покинуть_клан - выйти из текущего клана"""
+        user = self.get_user(user_id)
+        
+        if not user:
+            self.send_message(peer_id, "❌ Ошибка! Попробуй позже")
+            return
+        
+        if not user['clan']:
+            self.send_message(peer_id, "❌ Вы не состоите в клане!")
+            return
+        
+        clan_name = user['clan']
+        
+        # Проверяем, существует ли клан
+        clan = supabase.table('clans').select('*').eq('name', clan_name).execute()
+        
+        if not clan.data:
+            # Клана нет в базе, но у пользователя есть запись - просто очищаем
+            self.update_user(user_id, {'clan': None})
+            self.send_message(peer_id, "✅ Вы покинули несуществующий клан (данные очищены)")
+            return
+        
+        clan_data = clan.data[0]
+        
+        # Проверяем, является ли пользователь владельцем
+        if clan_data['owner'] == user_id:
+            # Владелец покидает клан - находим нового владельца
+            members = supabase.table('clan_members').select('*').eq('clan_name', clan_name).execute()
+            
+            # Удаляем владельца из участников
+            supabase.table('clan_members').delete().eq('clan_name', clan_name).eq('user_id', user_id).execute()
+            
+            # Получаем обновленный список участников
+            remaining_members = supabase.table('clan_members').select('*').eq('clan_name', clan_name).execute()
+            
+            if remaining_members.data:
+                # Есть другие участники - передаем владение первому
+                new_owner_id = remaining_members.data[0]['user_id']
+                supabase.table('clans').update({'owner': new_owner_id}).eq('name', clan_name).execute()
+                self.send_message(peer_id, f"👑 Вы покинули клан '{clan_name}'!\n🏆 Новый владелец: @id{new_owner_id}")
+            else:
+                # Участников не осталось - удаляем клан
+                supabase.table('clans').delete().eq('name', clan_name).execute()
+                self.send_message(peer_id, f"✅ Клан '{clan_name}' распущен (вы были последним участником)")
+        else:
+            # Обычный участник - просто удаляем из клана
+            supabase.table('clan_members').delete().eq('clan_name', clan_name).eq('user_id', user_id).execute()
+            self.send_message(peer_id, f"✅ @id{user_id} покинул клан '{clan_name}'!")
+        
+        # Обновляем данные пользователя
+        self.update_user(user_id, {'clan': None})
+    
+    # ============================ МАФИЯ ============================
+    def cmd_mafia(self, peer_id, user_id, args):
+        user = self.get_user(user_id)
+        if not user:
+            return
+        
+        if not user['mafia']:
+            self.send_message(peer_id, "❌ Ты не в мафии! Используй 'вступить_в_мафию' [название]")
+            return
+        
+        mafia = supabase.table('mafia').select('*').eq('name', user['mafia']).execute()
+        members = supabase.table('mafia_members').select('*').eq('mafia_name', user['mafia']).execute()
+        
+        self.send_message(
+            peer_id,
+            f"🔫 Мафия: {user['mafia']}\n"
+            f"👥 Участников: {len(members.data)}\n"
+            f"💰 Общак: {mafia.data[0]['money'] if mafia.data else 0}"
+        )
+    
+    def cmd_join_mafia(self, peer_id, user_id, args):
+        if not args:
+            self.send_message(peer_id, "❌ Название мафии! Доступны: Братки, Мафиози, Гангстеры")
+            return
+        
+        mafia_name = ' '.join(args)
+        
+        user = self.get_user(user_id)
+        if not user:
+            return
+        
+        if user['mafia']:
+            self.send_message(peer_id, "❌ Ты уже в мафии!")
+            return
+        
+        mafia = supabase.table('mafia').select('*').eq('name', mafia_name).execute()
+        
+        if not mafia.data:
+            supabase.table('mafia').insert({
+                'name': mafia_name,
+                'boss': user_id,
+                'money': 0
+            }).execute()
+        
+        supabase.table('mafia_members').insert({
+            'mafia_name': mafia_name,
+            'user_id': user_id
+        }).execute()
+        
+        self.update_user(user_id, {'mafia': mafia_name})
+        self.send_message(peer_id, f"✅ @id{user_id} в мафии '{mafia_name}'!")
+    
     # ============================ ОСТАЛЬНЫЕ КОМАНДЫ ============================
     def cmd_help(self, peer_id, user_id, args):
         self.send_message(
@@ -553,6 +756,7 @@ class RichBot:
             f"👥 создать_клан [название]\n"
             f"🤝 вступить [клан]\n"
             f"🏆 клан - инфо о клане\n"
+            f"🚪 покинуть_клан - выйти из клана\n"
             f"🔫 мафия - инфо о мафии\n"
             f"🔫 вступить_в_мафию [название]\n"
             f"⚔️ дуэль [id] [ставка]\n"
@@ -728,199 +932,6 @@ class RichBot:
             self.update_user(user_id, {'money': new_money})
         
         self.send_message(peer_id, f"🎰 @id{user_id}\n{result}\n💰 Новый баланс: {new_money}")
-    
-    def cmd_create_clan(self, peer_id, user_id, args):
-        if not args:
-            self.send_message(peer_id, "❌ Название клана!")
-            return
-        
-        clan_name = ' '.join(args)
-        
-        existing = supabase.table('clans').select('*').eq('name', clan_name).execute()
-        if existing.data:
-            self.send_message(peer_id, "❌ Клан уже есть!")
-            return
-        
-        user = self.get_user(user_id)
-        if not user:
-            return
-        
-        if user['clan']:
-            self.send_message(peer_id, "❌ Ты уже в клане!")
-            return
-        
-        if user['money'] < 5000:
-            self.send_message(peer_id, f"❌ Нужно 5000! У тебя {user['money']}")
-            return
-        
-        supabase.table('clans').insert({
-            'name': clan_name,
-            'owner': user_id,
-            'money': 0
-        }).execute()
-        
-        supabase.table('clan_members').insert({
-            'clan_name': clan_name,
-            'user_id': user_id
-        }).execute()
-        
-        self.update_user(user_id, {
-            'money': user['money'] - 5000,
-            'clan': clan_name
-        })
-        
-        self.send_message(peer_id, f"✅ Клан '{clan_name}' создан! Владелец: @id{user_id}")
-    
-    def cmd_join_clan(self, peer_id, user_id, args):
-        if not args:
-            self.send_message(peer_id, "❌ Название клана!")
-            return
-        
-        clan_name = ' '.join(args)
-        
-        clan = supabase.table('clans').select('*').eq('name', clan_name).execute()
-        if not clan.data:
-            self.send_message(peer_id, "❌ Клан не найден!")
-            return
-        
-        user = self.get_user(user_id)
-        if not user:
-            return
-        
-        if user['clan']:
-            self.send_message(peer_id, "❌ Ты уже в клане!")
-            return
-        
-        supabase.table('clan_members').insert({
-            'clan_name': clan_name,
-            'user_id': user_id
-        }).execute()
-        
-        self.update_user(user_id, {'clan': clan_name})
-        self.send_message(peer_id, f"✅ @id{user_id} вступил в клан '{clan_name}'!")
-
-    def cmd_leave_clan(self, peer_id, user_id, args):
-    """!покинуть_клан - выйти из текущего клана"""
-    user = self.get_user(user_id)
-    
-    if not user:
-        self.send_message(peer_id, "❌ Ошибка! Попробуй позже")
-        return
-    
-    if not user['clan']:
-        self.send_message(peer_id, "❌ Вы не состоите в клане!")
-        return
-    
-    clan_name = user['clan']
-    
-    # Проверяем, является ли пользователь владельцем клана
-    clan = supabase.table('clans').select('*').eq('name', clan_name).execute()
-    
-    if clan.data and clan.data[0]['owner'] == user_id:
-        # Владелец не может просто выйти, нужно либо передать владение, либо распустить клан
-        members = supabase.table('clan_members').select('*').eq('clan_name', clan_name).execute()
-        
-        if len(members.data) > 1:
-            # Есть другие участники — передаём владение случайному
-            other_members = [m for m in members.data if m['user_id'] != user_id]
-            if other_members:
-                new_owner_id = other_members[0]['user_id']
-                supabase.table('clans').update({'owner': new_owner_id}).eq('name', clan_name).execute()
-                self.send_message(peer_id, f"👑 Вы покинули клан '{clan_name}'!\n"
-                                           f"🏆 Новый владелец: @id{new_owner_id}")
-            else:
-                self.send_message(peer_id, "❌ Ошибка при передаче клана!")
-                return
-        else:
-            # В клане только владелец — удаляем клан
-            supabase.table('clans').delete().eq('name', clan_name).execute()
-            supabase.table('clan_members').delete().eq('clan_name', clan_name).execute()
-            self.send_message(peer_id, f"✅ Клан '{clan_name}' распущен, так как вы были единственным участником!")
-    else:
-        # Обычный участник — просто выходим
-        supabase.table('clan_members').delete().eq('clan_name', clan_name).eq('user_id', user_id).execute()
-        self.send_message(peer_id, f"✅ @id{user_id} покинул клан '{clan_name}'!")
-    
-    # Обновляем данные пользователя
-    self.update_user(user_id, {'clan': None})
-    
-    def cmd_clan_info(self, peer_id, user_id, args):
-        user = self.get_user(user_id)
-        if not user:
-            return
-        
-        if not user['clan']:
-            self.send_message(peer_id, "❌ Ты не в клане!")
-            return
-        
-        clan = supabase.table('clans').select('*').eq('name', user['clan']).execute()
-        members = supabase.table('clan_members').select('*').eq('clan_name', user['clan']).execute()
-        
-        if not clan.data:
-            self.send_message(peer_id, "❌ Клан не найден!")
-            return
-        
-        clan_data = clan.data[0]
-        
-        self.send_message(
-            peer_id,
-            f"🏆 Клан: {user['clan']}\n"
-            f"👑 Владелец: @id{clan_data['owner']}\n"
-            f"👥 Участников: {len(members.data)}\n"
-            f"💰 Казна: {clan_data['money']}\n"
-            f"📅 Создан: {clan_data['created_at'][:10]}"
-        )
-    
-    def cmd_mafia(self, peer_id, user_id, args):
-        user = self.get_user(user_id)
-        if not user:
-            return
-        
-        if not user['mafia']:
-            self.send_message(peer_id, "❌ Ты не в мафии! Используй 'вступить_в_мафию' [название]")
-            return
-        
-        mafia = supabase.table('mafia').select('*').eq('name', user['mafia']).execute()
-        members = supabase.table('mafia_members').select('*').eq('mafia_name', user['mafia']).execute()
-        
-        self.send_message(
-            peer_id,
-            f"🔫 Мафия: {user['mafia']}\n"
-            f"👥 Участников: {len(members.data)}\n"
-            f"💰 Общак: {mafia.data[0]['money'] if mafia.data else 0}"
-        )
-    
-    def cmd_join_mafia(self, peer_id, user_id, args):
-        if not args:
-            self.send_message(peer_id, "❌ Название мафии! Доступны: Братки, Мафиози, Гангстеры")
-            return
-        
-        mafia_name = ' '.join(args)
-        
-        user = self.get_user(user_id)
-        if not user:
-            return
-        
-        if user['mafia']:
-            self.send_message(peer_id, "❌ Ты уже в мафии!")
-            return
-        
-        mafia = supabase.table('mafia').select('*').eq('name', mafia_name).execute()
-        
-        if not mafia.data:
-            supabase.table('mafia').insert({
-                'name': mafia_name,
-                'boss': user_id,
-                'money': 0
-            }).execute()
-        
-        supabase.table('mafia_members').insert({
-            'mafia_name': mafia_name,
-            'user_id': user_id
-        }).execute()
-        
-        self.update_user(user_id, {'mafia': mafia_name})
-        self.send_message(peer_id, f"✅ @id{user_id} в мафии '{mafia_name}'!")
     
     def cmd_rob(self, peer_id, user_id, args):
         if not args:
