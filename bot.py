@@ -335,26 +335,42 @@ class RichBot:
         return True, cloth['name']
     
     def cmd_wardrobe(self, peer_id, user_id, args):
-        """!шкаф - показать всю одежду"""
-        user_clothes = self.get_user_clothes(user_id)
-        all_clothes = supabase.table('clothes').select('*').execute()
-        
-        if not user_clothes:
-            self.send_message(peer_id, "❌ У вас нет одежды! Администратор может выдать: !админ одежда [id] [название]")
-            return
-        
-        text = "👔 ВАШ ГАРДЕРОБ:\n\n"
-        
-        for item in all_clothes.data:
-            user_item = next((uc for uc in user_clothes if uc['clothes']['id'] == item['id']), None)
-            if user_item:
-                status = "✅ НАДЕТА" if user_item.get('equipped') else "📦 В шкафу"
-                text += f"• {item['name']} - {status}\n"
-            else:
-                text += f"• {item['name']} - ❌ Нет в инвентаре\n"
-        
-        text += "\n💡 Надеть: !надеть [название]\n💡 Снять: !снять [название]"
-        self.send_message(peer_id, text)
+    """!шкаф - показать только свою одежду"""
+    user_clothes = self.get_user_clothes(user_id)
+    
+    if not user_clothes:
+        self.send_message(peer_id, "❌ У вас нет одежды! Администратор может выдать: !админ одежда [id] [название]")
+        return
+    
+    text = "👔 ВАШ ГАРДЕРОБ:\n\n"
+    
+    # Разделяем надетую и ненадетую одежду
+    equipped = []
+    not_equipped = []
+    
+    for item in user_clothes:
+        if item.get('equipped'):
+            equipped.append(item['clothes']['name'])
+        else:
+            not_equipped.append(item['clothes']['name'])
+    
+    if equipped:
+        text += "✅ НАДЕТО НА ВАС:\n"
+        for name in equipped:
+            text += f"   • {name}\n"
+        text += "\n"
+    
+    if not_equipped:
+        text += "📦 В ШКАФУ:\n"
+        for name in not_equipped:
+            text += f"   • {name}\n"
+        text += "\n"
+    
+    text += "💡 Команды:\n"
+    text += "   • надеть [название]\n"
+    text += "   • снять [название]"
+    
+    self.send_message(peer_id, text)
     
     def cmd_wear(self, peer_id, user_id, args):
         """!надеть [название] - надеть одежду"""
