@@ -67,11 +67,22 @@ class RichBot:
             'топ': self.cmd_top,
             'админ': self.cmd_admin,
             'помощь': self.cmd_help,
-            'команды': self.cmd_help
+            'команды': self.cmd_help,
+            # НОВЫЕ КОМАНДЫ
+            'передать': self.cmd_transfer,
+            'бизнес': self.cmd_business,
+            'купитьбизнес': self.cmd_buy_business,
+            'собрать': self.cmd_collect_business,
+            'шкаф': self.cmd_wardrobe,
+            'надеть': self.cmd_wear,
+            'снять': self.cmd_unwear,
+            'выдатьодежду': self.cmd_give_clothes_to_all,
+            'рассылка': self.cmd_mass_mailing,
         }
         
         print("✅ Бот Рич (Supabase) запущен!")
         print(f"🤖 ID бота: {self.bot_id}")
+        print(f"👑 ADMIN_ID: {ADMIN_ID}")
         print(f"💬 В беседах используй ! или @{self.bot_screen_name} перед командой")
     
     def get_user(self, user_id):
@@ -89,7 +100,8 @@ class RichBot:
                     'level': 1,
                     'exp': 0,
                     'duels_won': 0,
-                    'duels_lost': 0
+                    'duels_lost': 0,
+                    'last_business_collect': datetime.now().isoformat()
                 }
                 supabase.table('users').insert(new_user).execute()
                 return new_user
@@ -116,6 +128,17 @@ class RichBot:
         except Exception as e:
             print(f"Ошибка отправки: {e}")
     
+    def send_message_to_user(self, user_id, message):
+        """Отправить личное сообщение пользователю"""
+        try:
+            self.vk.messages.send(
+                user_id=user_id,
+                message=message[:4000],
+                random_id=random.randint(1, 999999)
+            )
+        except Exception as e:
+            print(f"Ошибка отправки лички: {e}")
+    
     def check_blacklist(self, user_id):
         try:
             result = supabase.table('blacklist').select('*').eq('user_id', user_id).execute()
@@ -140,6 +163,323 @@ class RichBot:
         except:
             return True, 0
     
+    # ============================ КОМАНДА ПЕРЕДАЧИ ДЕНЕГ ============================
+    def cmd_transfer(self, peer_id, user_id, args):
+        """!передать @пользователь сумма"""
+        if len(args) < 2:
+            self.send_message(peer_id, "❌ Использование: передать [id] [сумма]")
+            return
+        
+        try:
+            target_id = int(args[0])
+            amount = int(args[1])
+        except:
+            self.send_message(peer_id, "❌ ID и сумма должны быть числами!")
+            return
+        
+        if target_id == user_id:
+            self.send_message(peer_id, "❌ Нельзя передать самому себе!")
+            return
+        
+        if amount <= 0:
+            self.send_message(peer_id, "❌ Сумма должна быть положительной!")
+            return
+        
+        sender = self.get_user(user_id)
+        receiver = self.get_user(target_id)
+        
+        if not sender or not receiver:
+            self.send_message(peer_id, "❌ Ошибка при получении данных!")
+            return
+        
+        if sender['money'] < amount:
+            self.send_message(peer_id, f"❌ Не хватает денег! У вас {sender['money']} {self.currency_symbol}")
+            return
+        
+        self.update_user(user_id, {'money': sender['money'] - amount})
+        self.update_user(target_id, {'money': receiver['money'] + amount})
+        
+        self.send_message(peer_id, f"✅ @id{user_id} передал @id{target_id} {amount} {self.currency_symbol}!")
+        self.send_message_to_user(target_id, f"💰 @id{user_id} передал вам {amount} {self.currency_symbol}!")
+    
+    # ============================ БИЗНЕСЫ ============================
+    def cmd_business(self, peer_id, user_id, args):
+        """!бизнес - список бизнесов и мои бизнесы"""
+        # Список доступных бизнесов
+        businesses = supabase.table('businesses').select('*').execute()
+        
+        # Мои бизнесы
+        my_businesses = supabase.table('user_businesses').select('*, businesses(*)').eq('user_id', user_id).execute()
+        
+        text = "🏢 ДОСТУПНЫЕ БИЗНЕСЫ:\n\n"
+        for biz in businesses.data:
+            text += f"📌 {biz['name']}\n"
+            text += f"   💰 Цена: {biz['price']} {self.currency_symbol}\n"
+            text += f"   ⏱ Доход в час: {biz['income_per_hour']} {self.currency_symbol}\n\n"
+        
+        if my_businesses.data:
+            text += "━━━━━━━━━━━━━━━━\n📋 ВАШИ БИЗНЕСЫ:\n"
+            total_income = 0
+            for mb in my_businesses.data:
+                biz = mb['businesses']
+                last_collected = datetime.fromisoformat(mb['last_collected'].replace('Z', '+00:00'))
+                hours_passed = (datetime.now() - last_collected).total_seconds() / 3600
+                pending = int(biz['income_per_hour'] * hours_passed)
+                text += f"   • {biz['name']} - +{pending} (готово к сбору)\n"
+                total_income += biz['income_per_hour']
+            text += f"\n💰 Общий доход в час: {total_income} {self.currency_symbol}"
+            text += f"\n💡 Собрать доход: !собрать"
+        else:
+            text += "\n❌ У вас нет бизнесов. Купить: !купитьбизнес [название]"
+        
+        self.send_message(peer_id, text)
+    
+    def cmd_buy_business(self, peer_id, user_id, args):
+        """!купитьбизнес [название]"""
+        if not args:
+            self.send_message(peer_id, "❌ Укажите название бизнеса! Доступны: киоск, бургерная, кофейня, отель, бизнес-центр, завод, круизный лайнер")
+            return
+        
+        biz_name = ' '.join(args).lower()
+        
+        # Ищем бизнес
+        business = supabase.table('businesses').select('*').ilike('name', f'%{biz_name}%').execute()
+        
+        if not business.data:
+            self.send_message(peer_id, "❌ Бизнес не найден! Список: !бизнес")
+            return
+        
+        biz = business.data[0]
+        user = self.get_user(user_id)
+        
+        if not user:
+            self.send_message(peer_id, "❌ Ошибка!")
+            return
+        
+        # Проверяем, не куплен ли уже
+        existing = supabase.table('user_businesses').select('*').eq('user_id', user_id).eq('business_id', biz['id']).execute()
+        if existing.data:
+            self.send_message(peer_id, f"❌ У вас уже есть {biz['name']}!")
+            return
+        
+        if user['money'] < biz['price']:
+            self.send_message(peer_id, f"❌ Не хватает денег! Нужно {biz['price']} {self.currency_symbol}")
+            return
+        
+        # Покупка
+        self.update_user(user_id, {'money': user['money'] - biz['price']})
+        supabase.table('user_businesses').insert({
+            'user_id': user_id,
+            'business_id': biz['id'],
+            'last_collected': datetime.now().isoformat()
+        }).execute()
+        
+        self.send_message(peer_id, f"✅ @id{user_id} купил бизнес {biz['name']} за {biz['price']} {self.currency_symbol}!")
+    
+    def cmd_collect_business(self, peer_id, user_id, args):
+        """!собрать - собрать доход со всех бизнесов"""
+        my_businesses = supabase.table('user_businesses').select('*, businesses(*)').eq('user_id', user_id).execute()
+        
+        if not my_businesses.data:
+            self.send_message(peer_id, "❌ У вас нет бизнесов! Купите: !купитьбизнес")
+            return
+        
+        user = self.get_user(user_id)
+        total_income = 0
+        
+        for mb in my_businesses.data:
+            biz = mb['businesses']
+            last_collected = datetime.fromisoformat(mb['last_collected'].replace('Z', '+00:00'))
+            hours_passed = (datetime.now() - last_collected).total_seconds() / 3600
+            
+            # Максимум до 24 часов накопления
+            hours_to_collect = min(hours_passed, 24)
+            income = int(biz['income_per_hour'] * hours_to_collect)
+            total_income += income
+            
+            # Обновляем время последнего сбора
+            supabase.table('user_businesses').update({
+                'last_collected': datetime.now().isoformat()
+            }).eq('user_id', user_id).eq('business_id', biz['id']).execute()
+        
+        if total_income > 0:
+            self.update_user(user_id, {'money': user['money'] + total_income})
+            self.send_message(peer_id, f"💰 @id{user_id} собрал {total_income} {self.currency_symbol} со своих бизнесов!")
+        else:
+            self.send_message(peer_id, "⏰ Накоплений пока нет. Зайдите позже!")
+    
+    # ============================ ОДЕЖДА ============================
+    def get_user_clothes(self, user_id):
+        """Получить всю одежду пользователя с информацией о том, надета ли она"""
+        result = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute()
+        return result.data
+    
+    def cmd_wardrobe(self, peer_id, user_id, args):
+        """!шкаф - показать всю одежду"""
+        user_clothes = self.get_user_clothes(user_id)
+        all_clothes = supabase.table('clothes').select('*').execute()
+        
+        if not user_clothes:
+            self.send_message(peer_id, "❌ У вас нет одежды! Администратор может выдать: !админ одежда [id] [название]")
+            return
+        
+        text = "👔 ВАШ ГАРДЕРОБ:\n\n"
+        
+        for item in all_clothes.data:
+            user_item = next((uc for uc in user_clothes if uc['clothes']['id'] == item['id']), None)
+            if user_item:
+                status = "✅ НАДЕТА" if user_item.get('equipped') else "📦 В шкафу"
+                text += f"• {item['name']} - {status}\n"
+            else:
+                text += f"• {item['name']} - ❌ Нет в инвентаре\n"
+        
+        text += "\n💡 Надеть: !надеть [название]\n💡 Снять: !снять [название]"
+        self.send_message(peer_id, text)
+    
+    def cmd_wear(self, peer_id, user_id, args):
+        """!надеть [название] - надеть одежду"""
+        if not args:
+            self.send_message(peer_id, "❌ Укажите название одежды!")
+            return
+        
+        clothes_name = ' '.join(args).lower()
+        
+        # Ищем одежду
+        clothes = supabase.table('clothes').select('*').ilike('name', f'%{clothes_name}%').execute()
+        if not clothes.data:
+            self.send_message(peer_id, "❌ Одежда не найдена!")
+            return
+        
+        cloth = clothes.data[0]
+        
+        # Проверяем, есть ли у пользователя
+        user_cloth = supabase.table('user_clothes').select('*').eq('user_id', user_id).eq('clothes_id', cloth['id']).execute()
+        if not user_cloth.data:
+            self.send_message(peer_id, f"❌ У вас нет {cloth['name']}!")
+            return
+        
+        # Снимаем всю остальную одежду (можно носить только одну вещь для простоты)
+        supabase.table('user_clothes').update({'equipped': False}).eq('user_id', user_id).execute()
+        
+        # Надеваем выбранную
+        supabase.table('user_clothes').update({'equipped': True}).eq('user_id', user_id).eq('clothes_id', cloth['id']).execute()
+        
+        self.send_message(peer_id, f"✅ @id{user_id} надел {cloth['name']}!")
+    
+    def cmd_unwear(self, peer_id, user_id, args):
+        """!снять [название] - снять одежду"""
+        if not args:
+            self.send_message(peer_id, "❌ Укажите название одежды!")
+            return
+        
+        clothes_name = ' '.join(args).lower()
+        
+        clothes = supabase.table('clothes').select('*').ilike('name', f'%{clothes_name}%').execute()
+        if not clothes.data:
+            self.send_message(peer_id, "❌ Одежда не найдена!")
+            return
+        
+        cloth = clothes.data[0]
+        
+        user_cloth = supabase.table('user_clothes').select('*').eq('user_id', user_id).eq('clothes_id', cloth['id']).execute()
+        if not user_cloth.data:
+            self.send_message(peer_id, f"❌ У вас нет {cloth['name']}!")
+            return
+        
+        supabase.table('user_clothes').update({'equipped': False}).eq('user_id', user_id).eq('clothes_id', cloth['id']).execute()
+        
+        self.send_message(peer_id, f"✅ @id{user_id} снял {cloth['name']}!")
+    
+    def give_clothes_to_user(self, user_id, clothes_name):
+        """Выдать одежду пользователю и отправить уведомление"""
+        clothes = supabase.table('clothes').select('*').ilike('name', clothes_name).execute()
+        if not clothes.data:
+            return False, "Одежда не найдена"
+        
+        cloth = clothes.data[0]
+        
+        # Проверяем, есть ли уже
+        existing = supabase.table('user_clothes').select('*').eq('user_id', user_id).eq('clothes_id', cloth['id']).execute()
+        if existing.data:
+            return False, f"У пользователя уже есть {cloth['name']}"
+        
+        supabase.table('user_clothes').insert({
+            'user_id': user_id,
+            'clothes_id': cloth['id'],
+            'equipped': False
+        }).execute()
+        
+        # Отправляем уведомление в личку
+        self.send_message_to_user(user_id, f"🎁 Вам выдана одежда: {cloth['name']}!")
+        
+        return True, cloth['name']
+    
+    def cmd_give_clothes_to_all(self, peer_id, user_id, args):
+        """!выдатьодежду [название] - выдать одежду всем пользователям"""
+        if user_id != ADMIN_ID:
+            self.send_message(peer_id, "❌ Нет прав! Это админ-команда.")
+            return
+        
+        if not args:
+            self.send_message(peer_id, "❌ Использование: выдатьодежду [название одежды]")
+            return
+        
+        clothes_name = ' '.join(args)
+        
+        # Получаем всех пользователей
+        users = supabase.table('users').select('user_id').execute()
+        
+        if not users.data:
+            self.send_message(peer_id, "❌ Нет пользователей в базе!")
+            return
+        
+        success_count = 0
+        fail_count = 0
+        
+        for user in users.data:
+            success, result = self.give_clothes_to_user(user['user_id'], clothes_name)
+            if success:
+                success_count += 1
+            else:
+                fail_count += 1
+        
+        self.send_message(peer_id, f"✅ Выдана одежда '{clothes_name}' {success_count} пользователям! ❌ Не выдано: {fail_count}")
+    
+    # ============================ РАССЫЛКА ============================
+    def cmd_mass_mailing(self, peer_id, user_id, args):
+        """!рассылка [текст] - отправить всем пользователям в личку и во все чаты"""
+        if user_id != ADMIN_ID:
+            self.send_message(peer_id, "❌ Нет прав! Это админ-команда.")
+            return
+        
+        if not args:
+            self.send_message(peer_id, "❌ Использование: рассылка [текст сообщения]")
+            return
+        
+        text = ' '.join(args)
+        
+        # Получаем всех пользователей
+        users = supabase.table('users').select('user_id').execute()
+        
+        if not users.data:
+            self.send_message(peer_id, "❌ Нет пользователей в базе!")
+            return
+        
+        # Отправляем в личку
+        sent_count = 0
+        for user in users.data:
+            try:
+                self.send_message_to_user(user['user_id'], f"📢 РАССЫЛКА:\n\n{text}")
+                sent_count += 1
+            except:
+                pass
+        
+        # Также отправляем во все беседы, где есть бот (попытка найти через longpoll неэффективна, поэтому просто дублируем в текущий чат)
+        self.send_message(peer_id, f"📢 РАССЫЛКА ОТ АДМИНА:\n\n{text}")
+        
+        self.send_message(peer_id, f"✅ Рассылка отправлена в личку {sent_count} пользователям и в этот чат!")
+    
+    # ============================ ОСТАЛЬНЫЕ КОМАНДЫ (БЕЗ ИЗМЕНЕНИЙ) ============================
     def cmd_help(self, peer_id, user_id, args):
         self.send_message(
             peer_id,
@@ -155,7 +495,14 @@ class RichBot:
             f"🔫 вступить_в_мафию [название]\n"
             f"⚔️ дуэль [id] [ставка]\n"
             f"💀 ограбить [id]\n"
-            f"📊 топ - топ игроков\n\n"
+            f"📊 топ - топ игроков\n"
+            f"💸 передать [id] [сумма] - перевести деньги\n"
+            f"🏢 бизнес - список бизнесов\n"
+            f"💰 купитьбизнес [название]\n"
+            f"🧾 собрать - собрать доход с бизнесов\n"
+            f"👔 шкаф - гардероб\n"
+            f"👕 надеть [название]\n"
+            f"👕 снять [название]\n\n"
             f"💡 В беседах используй ! перед командой или @{self.bot_screen_name}"
         )
     
@@ -641,18 +988,20 @@ class RichBot:
         
         self.send_message(peer_id, text)
     
+    # ============================ АДМИН КОМАНДЫ (С ПРОВЕРКОЙ ADMIN_ID) ============================
     def cmd_admin(self, peer_id, user_id, args):
         if user_id != ADMIN_ID:
-            self.send_message(peer_id, "❌ Нет прав!")
+            self.send_message(peer_id, "❌ Нет прав! Команды только для администратора.")
             return
         
         if not args:
-            self.send_message(peer_id, "👑 Админ команды:\n\n"
-                                      "• админ дать [id] [сумма]\n"
-                                      "• админ бан [id]\n"
-                                      "• админ разбан [id]\n"
-                                      "• админ сброс [id]\n"
-                                      "• админ стата")
+            self.send_message(peer_id, "👑 АДМИН КОМАНДЫ:\n\n"
+                                      "• админ дать [id] [сумма] - выдать деньги\n"
+                                      "• админ одежда [id] [название] - выдать одежду по id\n"
+                                      "• админ бан [id] - заблокировать\n"
+                                      "• админ разбан [id] - разблокировать\n"
+                                      "• админ сброс [id] - сбросить прогресс\n"
+                                      "• админ стата - статистика бота")
             return
         
         action = args[0].lower()
@@ -668,7 +1017,22 @@ class RichBot:
             target = self.get_user(target_id)
             if target:
                 self.update_user(target_id, {'money': target['money'] + amount})
-                self.send_message(peer_id, f"✅ Выдано {amount} @id{target_id}")
+                self.send_message(peer_id, f"✅ Выдано {amount} {self.currency_symbol} @id{target_id}")
+                self.send_message_to_user(target_id, f"👑 Администратор выдал вам {amount} {self.currency_symbol}!")
+        
+        elif action == 'одежда' and len(args) >= 3:
+            try:
+                target_id = int(args[1])
+                clothes_name = ' '.join(args[2:])
+            except:
+                self.send_message(peer_id, "❌ Неверный формат! Использование: админ одежда [id] [название]")
+                return
+            
+            success, result = self.give_clothes_to_user(target_id, clothes_name)
+            if success:
+                self.send_message(peer_id, f"✅ Выдана одежда '{result}' @id{target_id}")
+            else:
+                self.send_message(peer_id, f"❌ {result}")
         
         elif action == 'бан' and len(args) >= 2:
             try:
@@ -692,6 +1056,8 @@ class RichBot:
                 supabase.table('users').delete().eq('user_id', target_id).execute()
                 supabase.table('clan_members').delete().eq('user_id', target_id).execute()
                 supabase.table('mafia_members').delete().eq('user_id', target_id).execute()
+                supabase.table('user_clothes').delete().eq('user_id', target_id).execute()
+                supabase.table('user_businesses').delete().eq('user_id', target_id).execute()
                 self.send_message(peer_id, f"✅ Прогресс @id{target_id} сброшен")
             except:
                 self.send_message(peer_id, "❌ Ошибка!")
@@ -699,12 +1065,16 @@ class RichBot:
         elif action == 'стата':
             users_count = supabase.table('users').select('*', count='exact').execute()
             clans_count = supabase.table('clans').select('*', count='exact').execute()
+            businesses_count = supabase.table('user_businesses').select('*', count='exact').execute()
+            clothes_count = supabase.table('user_clothes').select('*', count='exact').execute()
             
             self.send_message(
                 peer_id,
                 f"📊 СТАТИСТИКА БОТА:\n\n"
                 f"👥 Игроков: {users_count.count}\n"
                 f"🏆 Кланов: {clans_count.count}\n"
+                f"🏢 Куплено бизнесов: {businesses_count.count}\n"
+                f"👔 Выдано одежды: {clothes_count.count}\n"
                 f"💰 Стартовый капитал: {self.start_money}\n"
                 f"💼 Работ: {len(self.jobs)}"
             )
@@ -715,7 +1085,6 @@ class RichBot:
         
         for event in self.longpoll.listen():
             if event.type == VkEventType.MESSAGE_NEW:
-                # Пропускаем сообщения от самого бота
                 if event.user_id == self.bot_id:
                     continue
                 
@@ -726,36 +1095,28 @@ class RichBot:
                 if not message_text:
                     continue
                 
-                # Определяем, нужно ли обрабатывать сообщение
                 should_process = False
                 clean_message = message_text
                 
-                # Личное сообщение
                 if peer_id == user_id:
                     should_process = True
-                # Беседа
                 else:
-                    # Проверяем начинается ли с !
                     if message_text.startswith('!'):
                         clean_message = message_text[1:].strip()
                         should_process = True
-                    # Проверяем упоминание бота
                     elif f"@{self.bot_screen_name}" in message_text.lower():
                         clean_message = message_text.lower().replace(f"@{self.bot_screen_name}", "").strip()
                         should_process = True
-                    # Публичные команды в беседе (без префикса)
-                    elif message_text.lower().split()[0] in ['баланс', 'топ', 'помощь', 'команды', 'начать']:
+                    elif message_text.lower().split()[0] in ['баланс', 'топ', 'помощь', 'команды', 'начать', 'бизнес', 'шкаф', 'передать']:
                         should_process = True
                         clean_message = message_text
                 
                 if not should_process:
                     continue
                 
-                # Проверка ЧС
                 if self.check_blacklist(user_id):
                     continue
                 
-                # Обработка команды
                 parts = clean_message.lower().split()
                 if not parts:
                     continue
@@ -776,11 +1137,9 @@ def run_web_server():
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == "__main__":
-    # Запускаем веб-сервер в отдельном потоке
     web_thread = threading.Thread(target=run_web_server)
     web_thread.daemon = True
     web_thread.start()
     
-    # Запускаем бота
     bot = RichBot()
     bot.run()
