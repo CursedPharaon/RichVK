@@ -522,35 +522,35 @@ class RichBot:
     # ==================== ВЗАИМОДЕЙСТВИЕ ====================
     
     def cmd_transfer(self, peer_id, user_id, args, reply_id=None):
-        target = reply_id
-        amount = None
-        for a in args:
-            if a.isdigit():
-                if target is None:
-                    target = int(a)
-                else:
-                    amount = int(a)
-                    break
-        if target is None:
-            self.send_message(peer_id, "❌ Укажите ID или ответьте на сообщение")
-            return
-        if amount is None:
-            self.send_message(peer_id, "❌ Укажите сумму")
-            return
-        if target == user_id:
-            self.send_message(peer_id, "❌ Себе нельзя")
-            return
-        if amount <= 0:
-            self.send_message(peer_id, "❌ Сумма > 0")
-            return
-        sender = self.get_user(user_id)
-        receiver = self.get_user(target)
-        if sender['money'] < amount:
-            self.send_message(peer_id, f"❌ У вас {sender['money']}")
-            return
-        self.update_user(user_id, {'money': sender['money'] - amount})
-        self.update_user(target, {'money': receiver['money'] + amount})
-        self.send_message(peer_id, f"✅ Передано {amount}")
+    target = reply_id
+    amount = None
+    for a in args:
+        if a.isdigit():
+            if target is None:
+                target = int(a)
+            else:
+                amount = int(a)
+                break
+    if target is None:
+        self.send_message(peer_id, "❌ Укажите ID или ответьте на сообщение")
+        return
+    if amount is None:
+        self.send_message(peer_id, "❌ Укажите сумму")
+        return
+    if target == user_id:
+        self.send_message(peer_id, "❌ Себе нельзя")
+        return
+    if amount <= 0:
+        self.send_message(peer_id, "❌ Сумма > 0")
+        return
+    sender = self.get_user(user_id)
+    receiver = self.get_user(target)
+    if sender['money'] < amount:
+        self.send_message(peer_id, f"❌ У вас {sender['money']}")
+        return
+    self.update_user(user_id, {'money': sender['money'] - amount})
+    self.update_user(target, {'money': receiver['money'] + amount})
+    self.send_message(peer_id, f"✅ Передано {amount}")
     
     def cmd_duel(self, peer_id, user_id, args, reply_id=None):
         target = reply_id
