@@ -926,6 +926,39 @@ class RichBot:
         self.update_user(user_id, {'money': user['money'] - 5000, 'clan': clan_name})
         self.send_message(peer_id, f"✅ Клан '{clan_name}' создан! Владелец: {self.make_mention(user_id)}")
 
+
+def cmd_join_clan(self, peer_id, user_id, args):
+    """!вступить [название_клана] - вступить в клан"""
+    if not args:
+        self.send_message(peer_id, "❌ Укажите название клана: !вступить Название")
+        return
+    
+    clan_name = ' '.join(args)
+    
+    # Проверяем, существует ли клан
+    clan = supabase.table('clans').select('*').eq('name', clan_name).execute()
+    if not clan.data:
+        self.send_message(peer_id, f"❌ Клан '{clan_name}' не найден!")
+        return
+    
+    user = self.get_user(user_id)
+    if not user:
+        self.send_message(peer_id, "❌ Ошибка!")
+        return
+    
+    if user['clan']:
+        self.send_message(peer_id, f"❌ Вы уже состоите в клане '{user['clan']}'! Сначала покиньте его: !покинуть_клан")
+        return
+    
+    # Добавляем в клан
+    supabase.table('clan_members').insert({
+        'clan_name': clan_name,
+        'user_id': user_id
+    }).execute()
+    
+    self.update_user(user_id, {'clan': clan_name})
+    self.send_message(peer_id, f"✅ {self.make_mention(user_id)} вступил в клан '{clan_name}'!")
+
 def cmd_donate_clan(self, peer_id, user_id, args):
     """!пополнить_клан [сумма] - пополнить казну клана"""
     if not args:
