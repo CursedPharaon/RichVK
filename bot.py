@@ -103,6 +103,7 @@ class RichBot:
             'создать_клан': self.cmd_create_clan,
             'вступить': self.cmd_join_clan,
             'клан': self.cmd_clan_info,
+            'пополнить_казну': self.cmd_donate_clan,
             'покинуть_клан': self.cmd_leave_clan,
             'выйти_из_клана': self.cmd_leave_clan,
             'битва_кланов': self.cmd_clan_war,
@@ -924,6 +925,49 @@ class RichBot:
         supabase.table('clan_members').insert({'clan_name': clan_name, 'user_id': user_id}).execute()
         self.update_user(user_id, {'money': user['money'] - 5000, 'clan': clan_name})
         self.send_message(peer_id, f"✅ Клан '{clan_name}' создан! Владелец: {self.make_mention(user_id)}")
+
+def cmd_donate_clan(self, peer_id, user_id, args):
+    """!пополнить_клан [сумма] - пополнить казну клана"""
+    if not args:
+        self.send_message(peer_id, "❌ Укажите сумму: !пополнить_клан 1000")
+        return
+    
+    try:
+        amount = int(args[0])
+    except:
+        self.send_message(peer_id, "❌ Сумма должна быть числом!")
+        return
+    
+    if amount <= 0:
+        self.send_message(peer_id, "❌ Сумма должна быть положительной!")
+        return
+    
+    user = self.get_user(user_id)
+    if not user:
+        self.send_message(peer_id, "❌ Ошибка!")
+        return
+    
+    if not user['clan']:
+        self.send_message(peer_id, "❌ Вы не состоите в клане!")
+        return
+    
+    if user['money'] < amount:
+        self.send_message(peer_id, f"❌ Не хватает денег! У вас {user['money']} {self.currency_symbol}")
+        return
+    
+    # Пополняем казну клана
+    clan = supabase.table('clans').select('*').eq('name', user['clan']).execute()
+    if not clan.data:
+        self.send_message(peer_id, "❌ Клан не найден!")
+        return
+    
+    new_money = clan.data[0]['money'] + amount
+    supabase.table('clans').update({'money': new_money}).eq('name', user['clan']).execute()
+    
+    # Списываем деньги у игрока
+    self.update_user(user_id, {'money': user['money'] - amount})
+    
+    self.send_message(peer_id, f"✅ {self.make_mention(user_id)} пополнил казну клана '{user['clan']}' на {amount} {self.currency_symbol}!\n💰 Теперь в казне: {new_money} {self.currency_symbol}")
     
     def cmd_join_clan(self, peer_id, user_id, args):
         if not args:
