@@ -151,8 +151,7 @@ class RichBot:
         return None
     
     def get_id_from_mention(self, text):
-        """Получить ID пользователя из упоминания @username или @id123 или просто числа"""
-        # Поиск @username
+        import re
         match = re.search(r'@(\w+)', text)
         if match:
             username = match.group(1)
@@ -162,11 +161,9 @@ class RichBot:
                     return user_info[0]['id']
             except:
                 pass
-        # Поиск @id123
         match = re.search(r'@id(\d+)', text)
         if match:
             return int(match.group(1))
-        # Просто число
         if text.isdigit():
             return int(text)
         return None
@@ -475,148 +472,116 @@ class RichBot:
         self.send_message(peer_id, f"✅ Передано {amount}")
     
     def cmd_duel(self, peer_id, user_id, args, reply_id=None):
-    target = reply_id
-    bet = None
-    
-    # Если ответили на сообщение
-    if target is None and args:
-        # Пробуем найти ID в аргументах
-        for a in args:
-            if a.isdigit():
-                if target is None:
-                    target = int(a)
-                else:
+        target = reply_id
+        bet = None
+        
+        if target is None and args:
+            for a in args:
+                if a.isdigit():
+                    if target is None:
+                        target = int(a)
+                    else:
+                        bet = int(a)
+                        break
+        
+        if target is None:
+            self.send_message(peer_id, "❌ Укажите ID соперника или ответьте на его сообщение!\nПример: !дуэль 123456 1000")
+            return
+        
+        if bet is None:
+            for a in args:
+                if a.isdigit() and int(a) != target:
                     bet = int(a)
                     break
         
-        # Если нашли только один аргумент, то это ставка, а ID из ответа
-        if target is not None and bet is None and len(args) == 1:
-            bet = target
-            target = reply_id
+        if bet is None:
+            self.send_message(peer_id, "❌ Укажите ставку!\nПример: !дуэль 123456 1000")
+            return
         
-        # Если всё ещё нет target, пробуем упоминание
-        if target is None:
-            import re
-            for a in args:
-                match = re.search(r'@id(\d+)', a)
-                if match:
-                    target = int(match.group(1))
-                    break
-    
-    # Если target до сих пор None, значит не указали
-    if target is None:
-        self.send_message(peer_id, "❌ Укажите ID соперника или ответьте на его сообщение!\nПример: !дуэль 123456 1000")
-        return
-    
-    # Если ставка не найдена
-    if bet is None:
-        for a in args:
-            if a.isdigit() and int(a) != target:
-                bet = int(a)
-                break
-    
-    if bet is None:
-        self.send_message(peer_id, "❌ Укажите ставку!\nПример: !дуэль 123456 1000")
-        return
-    
-    # Проверки
-    if target == user_id:
-        self.send_message(peer_id, "❌ Нельзя вызвать самого себя!")
-        return
-    
-    user = self.get_user(user_id)
-    opponent = self.get_user(target)
-    
-    if user is None or opponent is None:
-        self.send_message(peer_id, "❌ Игрок не найден!")
-        return
-    
-    if bet <= 0 or bet > user['money']:
-        self.send_message(peer_id, f"❌ Неверная ставка! У вас {user['money']}")
-        return
-    
-    # Создаём дуэль
-    supabase.table('duels').insert({
-        'challenger': user_id,
-        'opponent': target,
-        'bet': bet,
-        'status': 'pending'
-    }).execute()
-    
-    self.send_message(peer_id, f"⚔️ Вызов на дуэль!\n💰 Ставка: {bet}\nДля принятия: !принять_дуэль {bet}")
+        if target == user_id:
+            self.send_message(peer_id, "❌ Нельзя вызвать самого себя!")
+            return
+        
+        user = self.get_user(user_id)
+        opponent = self.get_user(target)
+        
+        if user is None or opponent is None:
+            self.send_message(peer_id, "❌ Игрок не найден!")
+            return
+        
+        if bet <= 0 or bet > user['money']:
+            self.send_message(peer_id, f"❌ Неверная ставка! У вас {user['money']}")
+            return
+        
+        supabase.table('duels').insert({
+            'challenger': user_id,
+            'opponent': target,
+            'bet': bet,
+            'status': 'pending'
+        }).execute()
+        
+        self.send_message(peer_id, f"⚔️ Вызов на дуэль!\n💰 Ставка: {bet}\nДля принятия: !принять_дуэль {bet}")
     
     def cmd_accept_duel(self, peer_id, user_id, args):
-    if not args:
-        self.send_message(peer_id, "❌ Укажите ставку: !принять_дуэль [ставка]")
-        return
-    
-    try:
-        bet = int(args[0])
-    except:
-        self.send_message(peer_id, "❌ Ставка должна быть числом!")
-        return
-    
-    # Ищем активную дуэль
-    duel = supabase.table('duels').select('*').eq('opponent', user_id).eq('bet', bet).eq('status', 'pending').execute().data
-    
-    if not duel:
-        self.send_message(peer_id, "❌ Нет активных вызовов на дуэль с такой ставкой!")
-        return
-    
-    d = duel[0]
-    challenger = self.get_user(d['challenger'])
-    opponent = self.get_user(user_id)
-    
-    if opponent['money'] < bet:
-        self.send_message(peer_id, f"❌ У вас не хватает денег для ставки {bet}!")
-        return
-    
-    # Списываем ставки
-    self.update_user(d['challenger'], {'money': challenger['money'] - bet})
-    self.update_user(user_id, {'money': opponent['money'] - bet})
-    
-    # Рассчитываем победителя
-    challenger_power = random.randint(1, 100) + challenger['level'] * 5
-    opponent_power = random.randint(1, 100) + opponent['level'] * 5
-    
-    winner_id = d['challenger'] if challenger_power > opponent_power else user_id
-    winner_prize = bet * 2
-    
-    self.update_user(winner_id, {'money': self.get_user(winner_id)['money'] + winner_prize})
-    
-    # Обновляем статистику
-    if winner_id == d['challenger']:
-        self.update_user(d['challenger'], {'duels_won': challenger['duels_won'] + 1})
-        self.update_user(user_id, {'duels_lost': opponent['duels_lost'] + 1})
-    else:
-        self.update_user(user_id, {'duels_won': opponent['duels_won'] + 1})
-        self.update_user(d['challenger'], {'duels_lost': challenger['duels_lost'] + 1})
-    
-    # Завершаем дуэль
-    supabase.table('duels').update({'status': 'completed'}).eq('duel_id', d['duel_id']).execute()
-    
-    # Получаем имя победителя
-    try:
-        winner_info = self.vk.users.get(user_ids=winner_id)[0]
-        winner_name = f"[id{winner_id}|{winner_info.get('first_name', '')}]"
-    except:
-        winner_name = str(winner_id)
-    
-    self.send_message(peer_id, f"⚔️ ПОБЕДИТЕЛЬ ДУЭЛИ: {winner_name}\n💰 Выигрыш: {winner_prize}")
+        if not args:
+            self.send_message(peer_id, "❌ Укажите ставку: !принять_дуэль [ставка]")
+            return
+        
+        try:
+            bet = int(args[0])
+        except:
+            self.send_message(peer_id, "❌ Ставка должна быть числом!")
+            return
+        
+        duel = supabase.table('duels').select('*').eq('opponent', user_id).eq('bet', bet).eq('status', 'pending').execute().data
+        
+        if not duel:
+            self.send_message(peer_id, "❌ Нет активных вызовов на дуэль с такой ставкой!")
+            return
+        
+        d = duel[0]
+        challenger = self.get_user(d['challenger'])
+        opponent = self.get_user(user_id)
+        
+        if opponent['money'] < bet:
+            self.send_message(peer_id, f"❌ У вас не хватает денег для ставки {bet}!")
+            return
+        
+        self.update_user(d['challenger'], {'money': challenger['money'] - bet})
+        self.update_user(user_id, {'money': opponent['money'] - bet})
+        
+        challenger_power = random.randint(1, 100) + challenger['level'] * 5
+        opponent_power = random.randint(1, 100) + opponent['level'] * 5
+        
+        winner_id = d['challenger'] if challenger_power > opponent_power else user_id
+        winner_prize = bet * 2
+        
+        self.update_user(winner_id, {'money': self.get_user(winner_id)['money'] + winner_prize})
+        
+        if winner_id == d['challenger']:
+            self.update_user(d['challenger'], {'duels_won': challenger['duels_won'] + 1})
+            self.update_user(user_id, {'duels_lost': opponent['duels_lost'] + 1})
+        else:
+            self.update_user(user_id, {'duels_won': opponent['duels_won'] + 1})
+            self.update_user(d['challenger'], {'duels_lost': challenger['duels_lost'] + 1})
+        
+        supabase.table('duels').update({'status': 'completed'}).eq('duel_id', d['duel_id']).execute()
+        
+        self.send_message(peer_id, f"⚔️ ПОБЕДИТЕЛЬ ДУЭЛИ: {winner_id}\n💰 Выигрыш: {winner_prize}")
     
     def cmd_decline_duel(self, peer_id, user_id, args):
-    if not args:
-        self.send_message(peer_id, "❌ Укажите ставку: !отклонить_дуэль [ставка]")
-        return
-    
-    try:
-        bet = int(args[0])
-    except:
-        self.send_message(peer_id, "❌ Ставка должна быть числом!")
-        return
-    
-    supabase.table('duels').update({'status': 'declined'}).eq('opponent', user_id).eq('bet', bet).eq('status', 'pending').execute()
-    self.send_message(peer_id, "❌ Вы отклонили дуэль!")
+        if not args:
+            self.send_message(peer_id, "❌ Укажите ставку: !отклонить_дуэль [ставка]")
+            return
+        
+        try:
+            bet = int(args[0])
+        except:
+            self.send_message(peer_id, "❌ Ставка должна быть числом!")
+            return
+        
+        supabase.table('duels').update({'status': 'declined'}).eq('opponent', user_id).eq('bet', bet).eq('status', 'pending').execute()
+        self.send_message(peer_id, "❌ Вы отклонили дуэль!")
     
     def cmd_rob(self, peer_id, user_id, args, reply_id=None):
         target = reply_id
@@ -805,7 +770,8 @@ class RichBot:
                 found = c
                 break
         if not found:
-            self.send_message(peer_id, f"❌ Нет '{name}'")
+            my_clothes = [c['clothes']['name'] for c in clothes]
+            self.send_message(peer_id, f"❌ Нет '{name}'\n📦 Ваша одежда: {', '.join(my_clothes)}")
             return
         supabase.table('user_clothes').update({'equipped': False}).eq('user_id', user_id).execute()
         supabase.table('user_clothes').update({'equipped': True}).eq('user_id', user_id).eq('clothes_id', found['clothes']['id']).execute()
@@ -902,7 +868,6 @@ class RichBot:
         
         action = args[0].lower()
         
-        # ВЫДАЧА ДЕНЕГ
         if action == 'дать' and len(args) >= 3:
             try:
                 target_id = self.get_id_from_mention(args[1])
@@ -928,7 +893,6 @@ class RichBot:
             except Exception as e:
                 self.send_message(peer_id, f"❌ Ошибка: {e}")
         
-        # РИЧКОИН
         elif action == 'ркоин' and len(args) >= 2:
             try:
                 price = int(args[1])
@@ -937,7 +901,6 @@ class RichBot:
             except:
                 self.send_message(peer_id, "❌ Ошибка")
         
-        # ВЫДАЧА ОДЕЖДЫ
         elif action == 'одежда' and len(args) >= 3:
             try:
                 target_id = self.get_id_from_mention(args[1])
@@ -965,7 +928,6 @@ class RichBot:
             except Exception as e:
                 self.send_message(peer_id, f"❌ Ошибка: {e}")
         
-        # БАН
         elif action == 'бан' and len(args) >= 2:
             try:
                 target_id = self.get_id_from_mention(args[1])
@@ -977,7 +939,6 @@ class RichBot:
             except:
                 self.send_message(peer_id, "❌ Ошибка")
         
-        # РАЗБАН
         elif action == 'разбан' and len(args) >= 2:
             try:
                 target_id = self.get_id_from_mention(args[1])
@@ -989,7 +950,6 @@ class RichBot:
             except:
                 self.send_message(peer_id, "❌ Ошибка")
         
-        # СБРОС
         elif action == 'сброс' and len(args) >= 2:
             try:
                 target_id = self.get_id_from_mention(args[1])
@@ -1005,7 +965,6 @@ class RichBot:
             except:
                 self.send_message(peer_id, "❌ Ошибка")
         
-        # СТАТИСТИКА
         elif action == 'стата':
             users = supabase.table('users').select('*', count='exact').execute()
             clans = supabase.table('clans').select('*', count='exact').execute()
