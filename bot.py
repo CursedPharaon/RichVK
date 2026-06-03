@@ -30,10 +30,28 @@ def health():
 class RichBot:
     def __init__(self):
         print("Запуск бота...")
+        
+        # Подключение к VK
         self.vk_session = vk_api.VkApi(token=VK_TOKEN)
         self.vk = self.vk_session.get_api()
         self.longpoll = VkLongPoll(self.vk_session)
-        self.bot_id = self.vk.users.get()[0]['id']
+        
+        # Получаем ID бота с проверкой
+        try:
+            users_info = self.vk.users.get()
+            if users_info and len(users_info) > 0:
+                self.bot_id = users_info[0]['id']
+            else:
+                print("ОШИБКА: Не удалось получить ID бота. Проверьте токен.")
+                self.bot_id = 0
+        except Exception as e:
+            print(f"ОШИБКА при получении ID бота: {e}")
+            self.bot_id = 0
+        
+        if self.bot_id == 0:
+            print("НЕ УДАЛОСЬ ЗАПУСТИТЬ БОТА! Проверьте токен VK.")
+            sys.exit(1)
+        
         self.start_money = 1000
         self.valid_mafias = ['Братки', 'Мафиози', 'Гангстеры']
         
@@ -68,25 +86,29 @@ class RichBot:
             'ркоин': self.cmd_richcoin, 'купить_ркоин': self.cmd_buy_richcoin, 'продать_ркоин': self.cmd_sell_richcoin,
             'взлом': self.cmd_hack,
         }
-        print(f"Бот запущен! ID: {self.bot_id}")
+        print(f"✅ Бот успешно запущен! ID: {self.bot_id}")
     
     def get_user(self, user_id):
         try:
             res = supabase.table('users').select('*').eq('user_id', user_id).execute()
             if res.data:
                 return res.data[0]
-            new = {'user_id': user_id, 'money': self.start_money, 'energy': 100, 'job': None, 'clan': None,
-                   'mafia': None, 'level': 1, 'exp': 0, 'duels_won': 0, 'duels_lost': 0, 'richcoin': 0}
+            new = {
+                'user_id': user_id, 'money': self.start_money, 'energy': 100, 'job': None,
+                'clan': None, 'mafia': None, 'level': 1, 'exp': 0,
+                'duels_won': 0, 'duels_lost': 0, 'richcoin': 0
+            }
             supabase.table('users').insert(new).execute()
             return new
-        except:
+        except Exception as e:
+            print(f"get_user error: {e}")
             return {'user_id': user_id, 'money': self.start_money, 'energy': 100, 'level': 1, 'richcoin': 0}
     
     def update_user(self, user_id, data):
         try:
             supabase.table('users').update(data).eq('user_id', user_id).execute()
-        except:
-            pass
+        except Exception as e:
+            print(f"update_user error: {e}")
     
     def get_richcoin_price(self):
         try:
@@ -97,7 +119,7 @@ class RichBot:
     
     def set_richcoin_price(self, price):
         try:
-            supabase.table('richcoin').insert({'price': price}).execute()
+            supabase.table('richcoin').insert({'price': price, 'last_updated': datetime.now().isoformat()}).execute()
         except:
             pass
     
@@ -117,6 +139,12 @@ class RichBot:
     def send_message(self, peer_id, text):
         try:
             self.vk.messages.send(peer_id=peer_id, message=text[:4000], random_id=random.randint(1, 9999999))
+        except Exception as e:
+            print(f"Send error: {e}")
+    
+    def send_message_to_user(self, user_id, text):
+        try:
+            self.vk.messages.send(user_id=user_id, message=text[:4000], random_id=random.randint(1, 9999999))
         except:
             pass
     
@@ -175,7 +203,10 @@ class RichBot:
             new_level += 1
             new_energy = 100
             self.send_message(peer_id, f"🎉 УРОВЕНЬ {new_level}!")
-        self.update_user(user_id, {'money': u['money'] + earned, 'energy': new_energy, 'exp': new_exp, 'level': new_level, 'last_work': datetime.now().isoformat()})
+        self.update_user(user_id, {
+            'money': u['money'] + earned, 'energy': new_energy,
+            'exp': new_exp, 'level': new_level, 'last_work': datetime.now().isoformat()
+        })
         self.send_message(peer_id, f"✅ +{earned} 💰\n⚡ Энергия: {new_energy}%")
     
     def cmd_casino(self, peer_id, user_id, args):
@@ -380,6 +411,7 @@ class RichBot:
         if u['mafia']:
             self.send_message(peer_id, f"❌ Вы уже в {u['mafia']}")
             return
+        supabase.table('mafia').insert({'name': name, 'boss': user_id, 'money': 0}).execute()
         supabase.table('mafia_members').insert({'mafia_name': name, 'user_id': user_id}).execute()
         self.update_user(user_id, {'mafia': name})
         self.send_message(peer_id, f"✅ Вы в мафии '{name}'!")
