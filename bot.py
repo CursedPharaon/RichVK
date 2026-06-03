@@ -15,11 +15,19 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 ADMIN_ID = int(os.environ.get('ADMIN_ID', 0))
 
-if not VK_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
-    print("Ошибка: переменные окружения не установлены")
+print("1. Проверка переменных...")
+if not VK_TOKEN:
+    print("Ошибка: VK_TOKEN не установлен")
     sys.exit(1)
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("Ошибка: SUPABASE_URL или SUPABASE_KEY не установлены")
+    sys.exit(1)
+print("2. Переменные OK")
 
+print("3. Подключение к Supabase...")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+print("4. Supabase подключен")
+
 app = Flask(__name__)
 
 @app.route('/')
@@ -28,31 +36,24 @@ def health():
 
 class RichBot:
     def __init__(self):
-        print("Запуск бота...")
+        print("5. Инициализация бота...")
         self.vk_session = vk_api.VkApi(token=VK_TOKEN)
         self.vk = self.vk_session.get_api()
         self.longpoll = VkLongPoll(self.vk_session)
         self.msg_counter = 0
         
+        # Получаем ID бота
         try:
             groups = self.vk.groups.getById(group_id=None)
             if groups and len(groups) > 0:
                 self.bot_id = -int(groups[0]['id'])
             else:
                 self.bot_id = 0
-        except:
+        except Exception as e:
+            print(f"Ошибка получения ID: {e}")
             self.bot_id = 0
         
-        self.chats = []
-        try:
-            conversations = self.vk.messages.getConversations(filter='all', count=200)
-            for item in conversations.get('items', []):
-                peer_id = item['conversation']['peer']['id']
-                if peer_id > 2000000000:
-                    self.chats.append(peer_id)
-        except:
-            pass
-        
+        print(f"6. Бот ID: {self.bot_id}")
         self.start_money = 1000
         self.valid_mafias = ['Братки', 'Мафиози', 'Гангстеры']
         
@@ -86,7 +87,7 @@ class RichBot:
             'взлом': self.cmd_hack,
         }
         self.name_cache = {}
-        print("Бот готов")
+        print("7. Бот готов!")
     
     def get_user_name(self, user_id):
         if user_id in self.name_cache:
@@ -161,8 +162,10 @@ class RichBot:
         try:
             self.msg_counter = (self.msg_counter + 1) % 1000000
             self.vk.messages.send(peer_id=peer_id, message=str(text)[:4000], random_id=self.msg_counter)
+            return True
         except Exception as e:
             print(f"Send error: {e}")
+            return False
     
     def send_message_to_user(self, user_id, text):
         try:
@@ -768,24 +771,15 @@ class RichBot:
         else:
             self.send_message(peer_id, "Накоплений нет")
     
-    # ==================== ОДЕЖДА (МОЖНО НАДЕВАТЬ СКОЛЬКО УГОДНО) ====================
-    
     def cmd_wardrobe(self, peer_id, user_id, args):
         clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
         if not clothes:
-            self.send_message(peer_id, "❌ У вас нет одежды\n!админ одежда [@user] [название] - выдать")
+            self.send_message(peer_id, "❌ У вас нет одежды")
             return
         
         text = "👔 ВАШ ГАРДЕРОБ:\n\n"
-        
-        equipped = []
-        not_equipped = []
-        
-        for c in clothes:
-            if c.get('equipped'):
-                equipped.append(c['clothes']['name'])
-            else:
-                not_equipped.append(c['clothes']['name'])
+        equipped = [c['clothes']['name'] for c in clothes if c.get('equipped')]
+        not_equipped = [c['clothes']['name'] for c in clothes if not c.get('equipped')]
         
         if equipped:
             text += "✅ НАДЕТО:\n"
@@ -807,27 +801,22 @@ class RichBot:
             self.send_message(peer_id, "❌ !надеть [название]")
             return
         name = ' '.join(args).lower()
-        
-        # Получаем всю одежду пользователя
-        user_clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
-        if not user_clothes:
+        clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
+        if not clothes:
             self.send_message(peer_id, "❌ У вас нет одежды")
             return
         
-        # Ищем нужную вещь
         found = None
-        for c in user_clothes:
+        for c in clothes:
             if name == c['clothes']['name'].lower() or name in c['clothes']['name'].lower():
                 found = c
                 break
         
         if not found:
-            # Показываем список доступной одежды
-            items = [c['clothes']['name'] for c in user_clothes]
+            items = [c['clothes']['name'] for c in clothes]
             self.send_message(peer_id, f"❌ Нет '{name}'\n📦 Ваша одежда: {', '.join(items)}")
             return
         
-        # Просто надеваем (не снимая другие вещи)
         supabase.table('user_clothes').update({'equipped': True}).eq('user_id', user_id).eq('clothes_id', found['clothes']['id']).execute()
         self.send_message(peer_id, f"✅ {self.make_mention(user_id)} надел {found['clothes']['name']}")
     
@@ -836,15 +825,13 @@ class RichBot:
             self.send_message(peer_id, "❌ !снять [название]")
             return
         name = ' '.join(args).lower()
-        
-        user_clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
-        if not user_clothes:
+        clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
+        if not clothes:
             self.send_message(peer_id, "❌ У вас нет одежды")
             return
         
-        # Ищем надетую вещь
         found = None
-        for c in user_clothes:
+        for c in clothes:
             if (name == c['clothes']['name'].lower() or name in c['clothes']['name'].lower()) and c.get('equipped'):
                 found = c
                 break
@@ -905,13 +892,26 @@ class RichBot:
                 time.sleep(0.05)
             except:
                 pass
-        for chat_id in self.chats:
+        
+        # Получаем беседы
+        chats = []
+        try:
+            conv = self.vk.messages.getConversations(filter='all', count=200)
+            for item in conv.get('items', []):
+                pid = item['conversation']['peer']['id']
+                if pid > 2000000000:
+                    chats.append(pid)
+        except:
+            pass
+        
+        for chat_id in chats:
             try:
                 self.send_message(chat_id, f"📢 РАССЫЛКА ОТ АДМИНА:\n\n{text}")
                 sent += 1
                 time.sleep(0.05)
             except:
                 pass
+        
         self.send_message(peer_id, f"✅ Отправлено {sent} получателям")
     
     def cmd_top(self, peer_id, user_id, args):
@@ -1033,7 +1033,7 @@ class RichBot:
             self.send_message(peer_id, "❌ Неизвестная команда")
     
     def run(self):
-        print("Бот слушает...")
+        print("8. Бот слушает сообщения...")
         processed = set()
         while True:
             try:
@@ -1069,7 +1069,7 @@ class RichBot:
                                 elif cmd in self.commands:
                                     self.commands[cmd](event.peer_id, event.user_id, args)
                             except Exception as e:
-                                print(f"Ошибка: {e}")
+                                print(f"Ошибка в команде {cmd}: {e}")
                                 self.send_message(event.peer_id, "❌ Ошибка")
             except Exception as e:
                 print(f"Longpoll error: {e}")
