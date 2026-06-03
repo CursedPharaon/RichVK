@@ -91,26 +91,22 @@ class RichBot:
     # ==================== ПОЛУЧЕНИЕ ИМЕНИ ПОЛЬЗОВАТЕЛЯ ====================
     
     def get_user_name(self, user_id):
-        """Получить имя пользователя для упоминания"""
-        if user_id in self.name_cache:
-            return self.name_cache[user_id]
-        
-        try:
-            user_info = self.vk.users.get(user_ids=user_id)[0]
-            screen_name = user_info.get('screen_name')
-            if screen_name:
-                name = screen_name
-            else:
-                first_name = user_info.get('first_name', '')
-                last_name = user_info.get('last_name', '')
-                if first_name and last_name:
-                    name = f"{first_name}_{last_name}"
-                else:
-                    name = first_name or str(user_id)
-            self.name_cache[user_id] = name
-            return name
-        except:
-            return str(user_id)
+    """Получить username для упоминания (только screen_name)"""
+    if user_id in self.name_cache:
+        return self.name_cache[user_id]
+    
+    try:
+        user_info = self.vk.users.get(user_ids=user_id, fields='screen_name')[0]
+        screen_name = user_info.get('screen_name')
+        if screen_name:
+            name = screen_name
+        else:
+            # Если нет screen_name, используем короткий ID
+            name = f"id{user_id}"
+        self.name_cache[user_id] = name
+        return name
+    except:
+        return str(user_id)
     
     def make_mention(self, user_id):
         """Создать кликабельное упоминание @username"""
@@ -891,35 +887,31 @@ class RichBot:
     # ==================== ОДЕЖДА (СЛОТЫ) ====================
     
     def cmd_wardrobe(self, peer_id, user_id, args):
-        clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
-        if not clothes:
-            self.send_message(peer_id, "❌ Нет одежды\n!админ одежда [@user] [название] - выдать")
-            return
-        
-        text = "👔 ГАРДЕРОБ:\n\n"
-        
-        # Группируем по слотам
-        for slot in self.cloth_slots:
-            slot_items = [c for c in clothes if c.get('slot', 'аксессуар') == slot]
-            equipped_items = [c for c in slot_items if c.get('equipped')]
-            not_equipped = [c for c in slot_items if not c.get('equipped')]
-            
-            slot_name = {
-                'голова': '🧢 ГОЛОВА', 'торс': '👕 ТОРС', 'ноги': '👖 НОГИ', 
-                'руки': '🖐️ РУКИ', 'аксессуар': '💍 АКСЕССУАР'
-            }.get(slot, slot.upper())
-            
-            if equipped_items:
-                text += f"✅ {slot_name}: {equipped_items[0]['clothes']['name']}\n"
-            else:
-                text += f"❌ {slot_name}: пусто\n"
-            
-            if not_equipped:
-                text += f"   📦 В шкафу: {', '.join([c['clothes']['name'] for c in not_equipped])}\n"
-            text += "\n"
-        
-        text += "💡 !надеть [название]\n💡 !снять [название]\n💡 !снять_все"
-        self.send_message(peer_id, text)
+    clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
+    if not clothes:
+        self.send_message(peer_id, "❌ У вас нет одежды\n!админ одежда [@user] [название] - выдать")
+        return
+    
+    text = "👔 ВАШ ГАРДЕРОБ:\n\n"
+    
+    # НАДЕТО
+    equipped = [c['clothes']['name'] for c in clothes if c.get('equipped')]
+    if equipped:
+        text += "✅ НАДЕТО:\n"
+        for item in equipped:
+            text += f"   • {item}\n"
+        text += "\n"
+    
+    # В ШКАФУ
+    not_equipped = [c['clothes']['name'] for c in clothes if not c.get('equipped')]
+    if not_equipped:
+        text += "📦 В ШКАФУ:\n"
+        for item in not_equipped:
+            text += f"   • {item}\n"
+        text += "\n"
+    
+    text += "💡 !надеть [название]\n💡 !снять [название]"
+    self.send_message(peer_id, text)
     
     def cmd_wear(self, peer_id, user_id, args):
         if not args:
