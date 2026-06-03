@@ -148,10 +148,10 @@ class RichBot:
             return True, 0
     
     def send_message(self, peer_id, text):
-        try:
-            self.vk.messages.send(peer_id=peer_id, message=text[:4000], random_id=random.randint(1, 9999999))
-        except Exception as e:
-            print(f"Send error: {e}")
+    try:
+        self.vk.messages.send(peer_id=peer_id, message=str(text)[:4000], random_id=random.randint(1, 9999999))
+    except Exception as e:
+        print(f"Send error: {e}")
     
     def send_message_to_user(self, user_id, text):
         try:
@@ -803,86 +803,119 @@ class RichBot:
         text = "🏆 ТОП-10 БОГАЧЕЙ:\n\n"
         for i, u in enumerate(users, 1):
             text += f"{i}. {u['user_id']} - {u['money']} (Ур.{u['level']})\n"
-        self.send_message(peer_id, text)
+        self.send_message(peer_id, def cmd_admin(self, peer_id, user_id, args):
+    if user_id != ADMIN_ID:
+        self.send_message(peer_id, "❌ Нет прав")
+        return
     
-    def cmd_admin(self, peer_id, user_id, args):
-        if user_id != ADMIN_ID:
-            self.send_message(peer_id, "❌ Нет прав")
-            return
-        if not args:
-            self.send_message(peer_id, "👑 АДМИН:\n!админ дать [id] [сумма]\n!админ ркоин [цена]\n!админ одежда [id] [название]\n!админ бан [id]\n!админ разбан [id]\n!админ сброс [id]\n!админ стата")
-            return
-        action = args[0].lower()
-        if action == 'дать' and len(args) >= 3:
-            try:
-                target = int(args[1])
-                amount = int(args[2])
-                u = self.get_user(target)
-                self.update_user(target, {'money': u['money'] + amount})
-                self.send_message(peer_id, f"✅ +{amount} пользователю {target}")
-            except:
-                self.send_message(peer_id, "❌ Ошибка")
-        elif action == 'ркоин' and len(args) >= 2:
-            try:
-                price = int(args[1])
-                self.set_richcoin_price(price)
-                self.send_message(peer_id, f"✅ Цена Ричкоина: {price}")
-            except:
-                self.send_message(peer_id, "❌ Ошибка")
-        elif action == 'одежда' and len(args) >= 3:
-            try:
-                target = int(args[1])
-                name = ' '.join(args[2:])
-                cloth = supabase.table('clothes').select('*').ilike('name', name).execute().data
-                if not cloth:
-                    cloth = supabase.table('clothes').select('*').ilike('name', f'%{name}%').execute().data
-                if not cloth:
-                    self.send_message(peer_id, "❌ Одежда не найдена")
-                    return
-                c = cloth[0]
-                ex = supabase.table('user_clothes').select('*').eq('user_id', target).eq('clothes_id', c['id']).execute().data
-                if ex:
-                    self.send_message(peer_id, "❌ У пользователя уже есть эта одежда")
-                    return
-                supabase.table('user_clothes').insert({'user_id': target, 'clothes_id': c['id'], 'equipped': False}).execute()
-                self.send_message(peer_id, f"✅ Выдана {c['name']} пользователю {target}")
-                try:
-                    self.vk.messages.send(user_id=target, message=f"🎁 Вам выдали {c['name']}!", random_id=random.randint(1,9999999))
-                except:
-                    pass
-            except:
-                self.send_message(peer_id, "❌ Ошибка")
-        elif action == 'бан' and len(args) >= 2:
-            try:
-                target = int(args[1])
-                supabase.table('blacklist').insert({'user_id': target}).execute()
-                self.send_message(peer_id, f"✅ Забанен {target}")
-            except:
-                self.send_message(peer_id, "❌ Ошибка")
-        elif action == 'разбан' and len(args) >= 2:
-            try:
-                target = int(args[1])
-                supabase.table('blacklist').delete().eq('user_id', target).execute()
-                self.send_message(peer_id, f"✅ Разбанен {target}")
-            except:
-                self.send_message(peer_id, "❌ Ошибка")
-        elif action == 'сброс' and len(args) >= 2:
-            try:
-                target = int(args[1])
-                supabase.table('users').delete().eq('user_id', target).execute()
-                supabase.table('clan_members').delete().eq('user_id', target).execute()
-                supabase.table('mafia_members').delete().eq('user_id', target).execute()
-                supabase.table('user_clothes').delete().eq('user_id', target).execute()
-                supabase.table('user_businesses').delete().eq('user_id', target).execute()
-                self.send_message(peer_id, f"✅ Прогресс пользователя {target} сброшен")
-            except:
-                self.send_message(peer_id, "❌ Ошибка")
-        elif action == 'стата':
-            users = supabase.table('users').select('*', count='exact').execute()
-            clans = supabase.table('clans').select('*', count='exact').execute()
-            price = self.get_richcoin_price()
-            self.send_message(peer_id, f"📊 СТАТИСТИКА:\n👥 Игроков: {users.count}\n🏆 Кланов: {clans.count}\n🪙 Цена Ричкоина: {price}")
+    if not args:
+        self.send_message(peer_id, "👑 АДМИН:\n!админ дать [id] [сумма]\n!админ ркоин [цена]\n!админ одежда [id] [название]\n!админ бан [id]\n!админ разбан [id]\n!админ сброс [id]\n!админ стата")
+        return
     
+    action = args[0].lower()
+    
+    # КОМАНДА ВЫДАЧИ ДЕНЕГ
+    if action == 'дать' and len(args) >= 3:
+        try:
+            target_id = int(args[1])
+            amount = int(args[2])
+            
+            # Получаем пользователя
+            target = self.get_user(target_id)
+            if target is None:
+                self.send_message(peer_id, f"❌ Пользователь {target_id} не найден")
+                return
+            
+            # Выдаём деньги
+            new_money = target['money'] + amount
+            self.update_user(target_id, {'money': new_money})
+            
+            self.send_message(peer_id, f"✅ Выдано {amount} денег пользователю {target_id}")
+            self.send_message_to_user(target_id, f"👑 Администратор выдал вам {amount} денег!")
+            
+        except ValueError:
+            self.send_message(peer_id, "❌ ID и сумма должны быть числами!")
+        except Exception as e:
+            self.send_message(peer_id, f"❌ Ошибка: {e}")
+    
+    # РИЧКОИН
+    elif action == 'ркоин' and len(args) >= 2:
+        try:
+            price = int(args[1])
+            self.set_richcoin_price(price)
+            self.send_message(peer_id, f"✅ Цена Ричкоина: {price}")
+        except:
+            self.send_message(peer_id, "❌ Ошибка")
+    
+    # ВЫДАЧА ОДЕЖДЫ
+    elif action == 'одежда' and len(args) >= 3:
+        try:
+            target_id = int(args[1])
+            name = ' '.join(args[2:])
+            
+            cloth = supabase.table('clothes').select('*').ilike('name', name).execute().data
+            if not cloth:
+                cloth = supabase.table('clothes').select('*').ilike('name', f'%{name}%').execute().data
+            if not cloth:
+                self.send_message(peer_id, "❌ Одежда не найдена")
+                return
+            
+            c = cloth[0]
+            ex = supabase.table('user_clothes').select('*').eq('user_id', target_id).eq('clothes_id', c['id']).execute().data
+            if ex:
+                self.send_message(peer_id, "❌ У пользователя уже есть эта одежда")
+                return
+            
+            supabase.table('user_clothes').insert({'user_id': target_id, 'clothes_id': c['id'], 'equipped': False}).execute()
+            self.send_message(peer_id, f"✅ Выдана {c['name']} пользователю {target_id}")
+            
+            try:
+                self.vk.messages.send(user_id=target_id, message=f"🎁 Вам выдали {c['name']}!", random_id=random.randint(1,9999999))
+            except:
+                pass
+        except:
+            self.send_message(peer_id, "❌ Ошибка")
+    
+    # БАН
+    elif action == 'бан' and len(args) >= 2:
+        try:
+            target_id = int(args[1])
+            supabase.table('blacklist').insert({'user_id': target_id}).execute()
+            self.send_message(peer_id, f"✅ Забанен {target_id}")
+        except:
+            self.send_message(peer_id, "❌ Ошибка")
+    
+    # РАЗБАН
+    elif action == 'разбан' and len(args) >= 2:
+        try:
+            target_id = int(args[1])
+            supabase.table('blacklist').delete().eq('user_id', target_id).execute()
+            self.send_message(peer_id, f"✅ Разбанен {target_id}")
+        except:
+            self.send_message(peer_id, "❌ Ошибка")
+    
+    # СБРОС ПРОГРЕССА
+    elif action == 'сброс' and len(args) >= 2:
+        try:
+            target_id = int(args[1])
+            supabase.table('users').delete().eq('user_id', target_id).execute()
+            supabase.table('clan_members').delete().eq('user_id', target_id).execute()
+            supabase.table('mafia_members').delete().eq('user_id', target_id).execute()
+            supabase.table('user_clothes').delete().eq('user_id', target_id).execute()
+            supabase.table('user_businesses').delete().eq('user_id', target_id).execute()
+            self.send_message(peer_id, f"✅ Прогресс пользователя {target_id} сброшен")
+        except:
+            self.send_message(peer_id, "❌ Ошибка")
+    
+    # СТАТИСТИКА
+    elif action == 'стата':
+        users = supabase.table('users').select('*', count='exact').execute()
+        clans = supabase.table('clans').select('*', count='exact').execute()
+        price = self.get_richcoin_price()
+        self.send_message(peer_id, f"📊 СТАТИСТИКА:\n👥 Игроков: {users.count}\n🏆 Кланов: {clans.count}\n🪙 Цена Ричкоина: {price}")
+    
+    else:
+        self.send_message(peer_id, "❌ Неизвестная админ команда")
     # ==================== ОСНОВНОЙ ЦИКЛ ====================
     
     def run(self):
