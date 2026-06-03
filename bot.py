@@ -32,6 +32,7 @@ class RichBot:
         self.vk_session = vk_api.VkApi(token=VK_TOKEN)
         self.vk = self.vk_session.get_api()
         self.longpoll = VkLongPoll(self.vk_session)
+        self.msg_id = 0
         try:
             groups = self.vk.groups.getById(group_id=None)
             if groups and len(groups) > 0:
@@ -72,17 +73,15 @@ class RichBot:
             'взлом': self.cmd_hack,
         }
         self.name_cache = {}
-        print("Бот успешно запущен")
+        print("Бот готов")
     
     def get_user_name(self, user_id):
         if user_id in self.name_cache:
             return self.name_cache[user_id]
         try:
-            user_info = self.vk.users.get(user_ids=user_id, fields='screen_name')[0]
-            screen_name = user_info.get('screen_name')
-            if screen_name:
-                name = screen_name
-            else:
+            info = self.vk.users.get(user_ids=user_id, fields='screen_name')[0]
+            name = info.get('screen_name')
+            if not name:
                 name = f"id{user_id}"
             self.name_cache[user_id] = name
             return name
@@ -90,8 +89,7 @@ class RichBot:
             return str(user_id)
     
     def make_mention(self, user_id):
-        name = self.get_user_name(user_id)
-        return f"@{name}"
+        return f"@{self.get_user_name(user_id)}"
     
     def get_user(self, user_id):
         try:
@@ -105,15 +103,14 @@ class RichBot:
             }
             supabase.table('users').insert(new).execute()
             return new
-        except Exception as e:
-            print(f"get_user error: {e}")
+        except:
             return {'user_id': user_id, 'money': self.start_money, 'energy': 100, 'level': 1, 'richcoin': 0}
     
     def update_user(self, user_id, data):
         try:
             supabase.table('users').update(data).eq('user_id', user_id).execute()
-        except Exception as e:
-            print(f"update_user error: {e}")
+        except:
+            pass
     
     def get_richcoin_price(self):
         try:
@@ -124,7 +121,7 @@ class RichBot:
     
     def set_richcoin_price(self, price):
         try:
-            supabase.table('richcoin').insert({'price': price, 'last_updated': datetime.now().isoformat()}).execute()
+            supabase.table('richcoin').insert({'price': price}).execute()
         except:
             pass
     
@@ -143,13 +140,15 @@ class RichBot:
     
     def send_message(self, peer_id, text):
         try:
-            self.vk.messages.send(peer_id=peer_id, message=str(text)[:4000], random_id=random.randint(1, 9999999))
+            self.msg_id += 1
+            self.vk.messages.send(peer_id=peer_id, message=str(text)[:4000], random_id=self.msg_id)
         except Exception as e:
             print(f"Send error: {e}")
     
     def send_message_to_user(self, user_id, text):
         try:
-            self.vk.messages.send(user_id=user_id, message=str(text)[:4000], random_id=random.randint(1, 9999999))
+            self.msg_id += 1
+            self.vk.messages.send(user_id=user_id, message=str(text)[:4000], random_id=self.msg_id)
         except:
             pass
     
@@ -162,14 +161,13 @@ class RichBot:
         return None
     
     def get_id_from_mention(self, text):
-        import re
         match = re.search(r'@(\w+)', text)
         if match:
             username = match.group(1)
             try:
-                user_info = self.vk.users.get(user_ids=username)
-                if user_info:
-                    return user_info[0]['id']
+                info = self.vk.users.get(user_ids=username)
+                if info:
+                    return info[0]['id']
             except:
                 pass
         match = re.search(r'@id(\d+)', text)
@@ -181,14 +179,14 @@ class RichBot:
     
     def cmd_start(self, peer_id, user_id, args):
         u = self.get_user(user_id)
-        self.send_message(peer_id, f"Добро пожаловать, {self.make_mention(user_id)}!\nБаланс: {u['money']}\nЭнергия: {u['energy']}%\nУровень: {u['level']}\n\n!помощь - список команд")
+        self.send_message(peer_id, f"Добро пожаловать, {self.make_mention(user_id)}!\nБаланс: {u['money']}\nЭнергия: {u['energy']}%\nУровень: {u['level']}\n\n!помощь")
     
     def cmd_balance(self, peer_id, user_id, args):
         u = self.get_user(user_id)
         self.send_message(peer_id, f"Баланс {self.make_mention(user_id)}: {u['money']}\nЭнергия: {u['energy']}%\nУровень: {u['level']}\nРичкоин: {u.get('richcoin', 0)}")
     
     def cmd_help(self, peer_id, user_id, args):
-        self.send_message(peer_id, "КОМАНДЫ:\n\n!баланс\n!работы\n!работа [название]\n!казино [кости] [ставка]\n!создать_клан [название]\n!вступить [клан]\n!клан\n!покинуть_клан\n!пополнить_клан [сумма]\n!битва_кланов [клан] [ставка]\n!прокачать_клан [атака/защита]\n!мафия\n!вступить_в_мафию [название]\n!покинуть_мафию\n!дуэль @user [ставка]\n!ограбить @user\n!взлом\n!ркоин\n!купить_ркоин [кол-во]\n!продать_ркоин [кол-во]\n!топ\n!передать [сумма]\n!бизнес\n!купитьбизнес [название]\n!собрать\n!шкаф\n!надеть [название]\n!снять [название]")
+        self.send_message(peer_id, "КОМАНДЫ:\n!баланс\n!работы\n!работа [название]\n!казино [кости] [ставка]\n!создать_клан [название]\n!вступить [клан]\n!клан\n!покинуть_клан\n!пополнить_клан [сумма]\n!битва_кланов [клан] [ставка]\n!прокачать_клан [атака/защита]\n!мафия\n!вступить_в_мафию [название]\n!покинуть_мафию\n!дуэль @user [ставка]\n!ограбить @user\n!взлом\n!ркоин\n!купить_ркоин [кол-во]\n!продать_ркоин [кол-во]\n!топ\n!передать [сумма]\n!бизнес\n!купитьбизнес [название]\n!собрать\n!шкаф\n!надеть [название]\n!снять [название]")
     
     def cmd_jobs(self, peer_id, user_id, args):
         text = "РАБОТЫ:\n\n"
@@ -198,7 +196,7 @@ class RichBot:
     
     def cmd_work(self, peer_id, user_id, args):
         if not args:
-            self.send_message(peer_id, "Укажите работу: !работа [название]")
+            self.send_message(peer_id, "!работа [название]")
             return
         name = args[0].lower()
         if name not in self.jobs:
@@ -228,11 +226,8 @@ class RichBot:
         self.send_message(peer_id, f"+{earned}\nЭнергия: {new_energy}%")
     
     def cmd_casino(self, peer_id, user_id, args):
-        if len(args) < 2:
+        if len(args) < 2 or args[0].lower() != 'кости':
             self.send_message(peer_id, "!казино [кости] [ставка]")
-            return
-        if args[0].lower() != 'кости':
-            self.send_message(peer_id, "Только игра 'кости'")
             return
         try:
             bet = int(args[1])
@@ -359,21 +354,27 @@ class RichBot:
         if not u['clan']:
             self.send_message(peer_id, "Вы не в клане")
             return
-        clan = supabase.table('clans').select('*').eq('name', u['clan']).execute().data
-        if not clan:
+        clan = supabase.table('clans').select('*').eq('name', u['clan']).execute()
+        if not clan.data:
             self.send_message(peer_id, "Клан не найден")
             return
-        c = clan[0]
+        c = clan.data[0]
         if c['owner'] != user_id:
-            self.send_message(peer_id, "Только владелец")
+            self.send_message(peer_id, "Только владелец клана")
             return
-        current = c.get(upgrade, 10)
+        if upgrade == 'атака':
+            current = c.get('attack', 10)
+        else:
+            current = c.get('defense', 10)
         cost = 5000 * current
         if c['money'] < cost:
             self.send_message(peer_id, f"В казне {c['money']}, нужно {cost}")
             return
         new_value = current + 5
-        supabase.table('clans').update({upgrade: new_value, 'money': c['money'] - cost}).eq('name', u['clan']).execute()
+        if upgrade == 'атака':
+            supabase.table('clans').update({'attack': new_value, 'money': c['money'] - cost}).eq('name', u['clan']).execute()
+        else:
+            supabase.table('clans').update({'defense': new_value, 'money': c['money'] - cost}).eq('name', u['clan']).execute()
         self.send_message(peer_id, f"{upgrade} {current} -> {new_value}\n-{cost}")
     
     def cmd_clan_war(self, peer_id, user_id, args):
@@ -641,7 +642,7 @@ class RichBot:
     def cmd_richcoin(self, peer_id, user_id, args):
         price = self.get_richcoin_price()
         u = self.get_user(user_id)
-        self.send_message(peer_id, f"ЦЕНА: {price}\nУ {self.make_mention(user_id)}: {u.get('richcoin',0)} RC\n\n!купить_ркоин [кол-во]\n!продать_ркоин [кол-во]")
+        self.send_message(peer_id, f"ЦЕНА: {price}\nУ {self.make_mention(user_id)}: {u.get('richcoin', 0)} RC\n\n!купить_ркоин [кол-во]\n!продать_ркоин [кол-во]")
     
     def cmd_buy_richcoin(self, peer_id, user_id, args):
         if not args:
@@ -679,7 +680,7 @@ class RichBot:
             return
         u = self.get_user(user_id)
         if u.get('richcoin', 0) < amount:
-            self.send_message(peer_id, f"У вас {u.get('richcoin',0)} RC")
+            self.send_message(peer_id, f"У вас {u.get('richcoin', 0)} RC")
             return
         price = self.get_richcoin_price()
         income = int(price * amount * 0.95)
@@ -768,12 +769,12 @@ class RichBot:
             self.send_message(peer_id, "!надеть [название]")
             return
         name = ' '.join(args).lower()
-        user_clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
-        if not user_clothes:
+        clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
+        if not clothes:
             self.send_message(peer_id, "Нет одежды")
             return
         found = None
-        for c in user_clothes:
+        for c in clothes:
             if name in c['clothes']['name'].lower():
                 found = c
                 break
@@ -789,9 +790,9 @@ class RichBot:
             self.send_message(peer_id, "!снять [название]")
             return
         name = ' '.join(args).lower()
-        user_clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
+        clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
         found = None
-        for c in user_clothes:
+        for c in clothes:
             if name in c['clothes']['name'].lower() and c.get('equipped'):
                 found = c
                 break
@@ -825,10 +826,7 @@ class RichBot:
                 already += 1
                 continue
             supabase.table('user_clothes').insert({'user_id': u['user_id'], 'clothes_id': c['id'], 'equipped': False}).execute()
-            try:
-                self.vk.messages.send(user_id=u['user_id'], message=f"Вам выдали {c['name']}!", random_id=random.randint(1, 9999999))
-            except:
-                pass
+            self.send_message_to_user(u['user_id'], f"Вам выдали {c['name']}!")
             ok += 1
             time.sleep(0.05)
         self.send_message(peer_id, f"Выдано {ok} игрокам\nУ {already} уже было")
@@ -845,7 +843,7 @@ class RichBot:
         sent = 0
         for u in users:
             try:
-                self.vk.messages.send(user_id=u['user_id'], message=text, random_id=random.randint(1, 9999999))
+                self.send_message_to_user(u['user_id'], text)
                 sent += 1
                 time.sleep(0.05)
             except:
