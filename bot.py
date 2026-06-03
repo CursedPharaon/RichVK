@@ -34,7 +34,6 @@ class RichBot:
         self.longpoll = VkLongPoll(self.vk_session)
         self.msg_counter = 0
         
-        # Получаем ID бота
         try:
             groups = self.vk.groups.getById(group_id=None)
             if groups and len(groups) > 0:
@@ -44,19 +43,23 @@ class RichBot:
         except:
             self.bot_id = 0
         
-        # Получаем все беседы, где есть бот
         self.chats = []
         try:
             conversations = self.vk.messages.getConversations(filter='all', count=200)
             for item in conversations.get('items', []):
                 peer_id = item['conversation']['peer']['id']
-                if peer_id > 2000000000:  # ID беседы
+                if peer_id > 2000000000:
                     self.chats.append(peer_id)
         except:
             pass
         
         self.start_money = 1000
         self.valid_mafias = ['Братки', 'Мафиози', 'Гангстеры']
+        
+        # Слоты одежды (аксессуары можно надевать несколько)
+        self.slot_types = ['голова', 'торс', 'ноги', 'руки']
+        self.accessory_slot = 'аксессуар'  # для этого слота можно много вещей
+        
         self.jobs = {
             'программист': {'money': (500, 1000), 'energy': 20},
             'грузчик': {'money': (200, 500), 'energy': 15},
@@ -106,7 +109,10 @@ class RichBot:
         return f"@{self.get_user_name(user_id)}"
     
     def format_number(self, num):
-        return f"{num:,}".replace(',', ' ')
+        try:
+            return f"{int(num):,}".replace(',', ' ')
+        except:
+            return str(num)
     
     def get_user(self, user_id):
         try:
@@ -126,8 +132,8 @@ class RichBot:
     def update_user(self, user_id, data):
         try:
             supabase.table('users').update(data).eq('user_id', user_id).execute()
-        except:
-            pass
+        except Exception as e:
+            print(f"update_user error: {e}")
     
     def get_richcoin_price(self):
         try:
@@ -193,6 +199,8 @@ class RichBot:
         if text.isdigit():
             return int(text)
         return None
+    
+    # ==================== ОСНОВНЫЕ КОМАНДЫ ====================
     
     def cmd_start(self, peer_id, user_id, args):
         u = self.get_user(user_id)
@@ -265,6 +273,8 @@ class RichBot:
             self.send_message(peer_id, f"{user_roll} vs {bot_roll}\n-{self.format_number(bet)}\n{self.format_number(u['money'] - bet)}")
         else:
             self.send_message(peer_id, f"{user_roll} vs {bot_roll}\nНичья\n{self.format_number(u['money'])}")
+    
+    # ==================== КЛАНЫ ====================
     
     def cmd_create_clan(self, peer_id, user_id, args):
         if not args:
@@ -459,6 +469,8 @@ class RichBot:
         supabase.table('clan_wars').update({'winner': winner, 'status': 'completed'}).eq('id', war[0]['id']).execute()
         self.send_message(peer_id, f"ПОБЕДИТЕЛЬ: {winner}\n+{self.format_number(total)}")
     
+    # ==================== МАФИЯ ====================
+    
     def cmd_mafia(self, peer_id, user_id, args):
         u = self.get_user(user_id)
         if not u['mafia']:
@@ -502,6 +514,8 @@ class RichBot:
         else:
             self.send_message(peer_id, f"{self.make_mention(user_id)} покинул '{name}'")
         self.update_user(user_id, {'mafia': None})
+    
+    # ==================== ВЗАИМОДЕЙСТВИЕ ====================
     
     def cmd_transfer(self, peer_id, user_id, args, reply_id=None):
         target = reply_id
@@ -656,6 +670,8 @@ class RichBot:
             self.update_user(user_id, {'last_hack': datetime.now().isoformat()})
             self.send_message(peer_id, f"{self.make_mention(user_id)} провал! {item['name']}")
     
+    # ==================== РИЧКОИН ====================
+    
     def cmd_richcoin(self, peer_id, user_id, args):
         price = self.get_richcoin_price()
         u = self.get_user(user_id)
@@ -704,6 +720,8 @@ class RichBot:
         self.update_user(user_id, {'money': u['money'] + income, 'richcoin': u.get('richcoin', 0) - amount})
         self.set_richcoin_price(int(price * 0.95))
         self.send_message(peer_id, f"{self.make_mention(user_id)} продал {self.format_number(amount)} RC за {self.format_number(income)}\nЦена: {self.format_number(int(price * 0.95))}")
+    
+    # ==================== БИЗНЕСЫ ====================
     
     def cmd_business(self, peer_id, user_id, args):
         businesses = supabase.table('businesses').select('*').execute().data
@@ -766,19 +784,48 @@ class RichBot:
         else:
             self.send_message(peer_id, "Накоплений нет")
     
+    # ==================== ОДЕЖДА (С НЕСКОЛЬКИМИ АКСЕССУАРАМИ) ====================
+    
     def cmd_wardrobe(self, peer_id, user_id, args):
         clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
         if not clothes:
             self.send_message(peer_id, "Нет одежды\n!админ одежда [@user] [название]")
             return
-        text = "ГАРДЕРОБ:\n\n"
-        eq = [c['clothes']['name'] for c in clothes if c.get('equipped')]
-        not_eq = [c['clothes']['name'] for c in clothes if not c.get('equipped')]
-        if eq:
-            text += "НАДЕТО:\n" + "\n".join(f"   {n}" for n in eq) + "\n\n"
-        if not_eq:
-            text += "В ШКАФУ:\n" + "\n".join(f"   {n}" for n in not_eq) + "\n\n"
-        text += "!надеть [название]\n!снять [название]"
+        
+        text = "👔 ГАРДЕРОБ:\n\n"
+        
+        # Отделяем основные слоты и аксессуары
+        main_slots = {}
+        accessories = []
+        
+        for c in clothes:
+            slot = c.get('slot', 'аксессуар')
+            if slot == 'аксессуар':
+                if c.get('equipped'):
+                    accessories.append(f"✅ {c['clothes']['name']}")
+                else:
+                    accessories.append(f"📦 {c['clothes']['name']}")
+            else:
+                if c.get('equipped'):
+                    main_slots[slot] = f"✅ {c['clothes']['name']}"
+                else:
+                    if slot not in main_slots:
+                        main_slots[slot] = f"❌ пусто"
+        
+        # Показываем основные слоты
+        slot_names = {'голова': '🧢 ГОЛОВА', 'торс': '👕 ТОРС', 'ноги': '👖 НОГИ', 'руки': '🖐️ РУКИ'}
+        for slot, name in slot_names.items():
+            status = main_slots.get(slot, "❌ пусто")
+            text += f"{name}: {status}\n"
+        
+        text += "\n💍 АКСЕССУАРЫ:\n"
+        if accessories:
+            for a in accessories:
+                text += f"   {a}\n"
+        else:
+            text += "   ❌ нет аксессуаров\n"
+        
+        text += "\n💡 !надеть [название]\n💡 !снять [название]"
         self.send_message(peer_id, text)
     
     def cmd_wear(self, peer_id, user_id, args):
@@ -786,38 +833,60 @@ class RichBot:
             self.send_message(peer_id, "!надеть [название]")
             return
         name = ' '.join(args).lower()
-        clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
-        if not clothes:
+        
+        # Получаем всю одежду пользователя
+        user_clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
+        if not user_clothes:
             self.send_message(peer_id, "Нет одежды")
             return
+        
+        # Ищем нужную вещь
         found = None
-        for c in clothes:
+        for c in user_clothes:
             if name in c['clothes']['name'].lower():
                 found = c
                 break
+        
         if not found:
             self.send_message(peer_id, f"Нет '{name}'")
             return
-        supabase.table('user_clothes').update({'equipped': False}).eq('user_id', user_id).execute()
-        supabase.table('user_clothes').update({'equipped': True}).eq('user_id', user_id).eq('clothes_id', found['clothes']['id']).execute()
-        self.send_message(peer_id, f"{self.make_mention(user_id)} надел {found['clothes']['name']}")
+        
+        slot = found.get('slot', 'аксессуар')
+        
+        if slot == 'аксессуар':
+            # Аксессуары: просто надеваем (не снимая другие)
+            supabase.table('user_clothes').update({'equipped': True}).eq('user_id', user_id).eq('clothes_id', found['clothes']['id']).execute()
+            self.send_message(peer_id, f"✅ {self.make_mention(user_id)} надел {found['clothes']['name']}")
+        else:
+            # Основные слоты: снимаем старую вещь в этом слоте, надеваем новую
+            supabase.table('user_clothes').update({'equipped': False}).eq('user_id', user_id).eq('slot', slot).execute()
+            supabase.table('user_clothes').update({'equipped': True}).eq('user_id', user_id).eq('clothes_id', found['clothes']['id']).execute()
+            self.send_message(peer_id, f"✅ {self.make_mention(user_id)} надел {found['clothes']['name']}")
     
     def cmd_unwear(self, peer_id, user_id, args):
         if not args:
             self.send_message(peer_id, "!снять [название]")
             return
         name = ' '.join(args).lower()
-        clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
+        
+        user_clothes = supabase.table('user_clothes').select('*, clothes(*)').eq('user_id', user_id).execute().data
+        if not user_clothes:
+            self.send_message(peer_id, "Нет одежды")
+            return
+        
+        # Ищем надетую вещь
         found = None
-        for c in clothes:
+        for c in user_clothes:
             if name in c['clothes']['name'].lower() and c.get('equipped'):
                 found = c
                 break
+        
         if not found:
-            self.send_message(peer_id, f"Не надето '{name}'")
+            self.send_message(peer_id, f"❌ Не надето '{name}'")
             return
+        
         supabase.table('user_clothes').update({'equipped': False}).eq('user_id', user_id).eq('clothes_id', found['clothes']['id']).execute()
-        self.send_message(peer_id, f"{self.make_mention(user_id)} снял {found['clothes']['name']}")
+        self.send_message(peer_id, f"✅ {self.make_mention(user_id)} снял {found['clothes']['name']}")
     
     def cmd_give_clothes_to_all(self, peer_id, user_id, args):
         if user_id != ADMIN_ID:
@@ -834,27 +903,25 @@ class RichBot:
             self.send_message(peer_id, "Одежда не найдена")
             return
         c = cloth[0]
-        
-        # Получаем всех пользователей из БД
+        slot = c.get('default_slot', 'аксессуар')
         users = supabase.table('users').select('user_id').execute().data
         ok = 0
         already = 0
-        
         for u in users:
             ex = supabase.table('user_clothes').select('*').eq('user_id', u['user_id']).eq('clothes_id', c['id']).execute().data
             if ex:
                 already += 1
                 continue
-            supabase.table('user_clothes').insert({'user_id': u['user_id'], 'clothes_id': c['id'], 'equipped': False}).execute()
+            supabase.table('user_clothes').insert({'user_id': u['user_id'], 'clothes_id': c['id'], 'equipped': False, 'slot': slot}).execute()
             try:
                 self.send_message_to_user(u['user_id'], f"🎁 Вам выдали {c['name']}!")
             except:
                 pass
             ok += 1
             time.sleep(0.05)
-        
-        # Также отправляем уведомление в текущий чат
         self.send_message(peer_id, f"✅ Выдано {ok} игрокам\n📦 У {already} уже было")
+    
+    # ==================== РАССЫЛКА ====================
     
     def cmd_mass_mailing(self, peer_id, user_id, args):
         if user_id != ADMIN_ID:
@@ -863,14 +930,9 @@ class RichBot:
         if not args:
             self.send_message(peer_id, "!рассылка [текст]")
             return
-        
         text = ' '.join(args)
-        
-        # Получаем всех пользователей из БД
         users = supabase.table('users').select('user_id').execute().data
         sent = 0
-        
-        # Отправляем в личку всем пользователям
         for u in users:
             try:
                 self.send_message_to_user(u['user_id'], f"📢 РАССЫЛКА:\n\n{text}")
@@ -878,28 +940,26 @@ class RichBot:
                 time.sleep(0.05)
             except:
                 pass
-        
-        # Отправляем во все беседы, где есть бот
-        chats_sent = 0
         for chat_id in self.chats:
             try:
                 self.send_message(chat_id, f"📢 РАССЫЛКА ОТ АДМИНА:\n\n{text}")
-                chats_sent += 1
+                sent += 1
                 time.sleep(0.05)
             except:
                 pass
-        
-        self.send_message(peer_id, f"✅ Отправлено {sent} пользователям в ЛС и в {chats_sent} бесед")
+        self.send_message(peer_id, f"✅ Отправлено {sent} получателям")
     
     def cmd_top(self, peer_id, user_id, args):
         users = supabase.table('users').select('user_id, money, level').order('money', desc=True).limit(10).execute().data
         if not users:
             self.send_message(peer_id, "Нет игроков")
             return
-        text = "ТОП-10 БОГАЧЕЙ:\n\n"
+        text = "🏆 ТОП-10 БОГАЧЕЙ:\n\n"
         for i, u in enumerate(users, 1):
             text += f"{i}. {self.make_mention(u['user_id'])} - {self.format_number(u['money'])} (Ур.{u['level']})\n"
         self.send_message(peer_id, text)
+    
+    # ==================== АДМИН КОМАНДЫ ====================
     
     def cmd_admin(self, peer_id, user_id, args):
         if user_id != ADMIN_ID:
@@ -922,10 +982,12 @@ class RichBot:
                 if target is None:
                     self.send_message(peer_id, "Пользователь не найден")
                     return
-                new_money = target['money'] + amount
+                old_money = target['money']
+                new_money = old_money + amount
                 self.update_user(target_id, {'money': new_money})
-                self.send_message(peer_id, f"✅ Выдано {self.format_number(amount)} {self.make_mention(target_id)}\n💰 Теперь {self.format_number(new_money)}")
-                self.send_message_to_user(target_id, f"👑 Администратор выдал вам {self.format_number(amount)}!")
+                updated = self.get_user(target_id)
+                self.send_message(peer_id, f"✅ Выдано {self.format_number(amount)} {self.make_mention(target_id)}\n💰 Был: {self.format_number(old_money)}\n💰 Стал: {self.format_number(updated['money'])}")
+                self.send_message_to_user(target_id, f"👑 Администратор выдал вам {self.format_number(amount)}!\n💰 Ваш баланс: {self.format_number(updated['money'])}")
             except Exception as e:
                 self.send_message(peer_id, f"Ошибка: {e}")
         
@@ -951,11 +1013,12 @@ class RichBot:
                     self.send_message(peer_id, "Одежда не найдена")
                     return
                 c = cloth[0]
+                slot = c.get('default_slot', 'аксессуар')
                 ex = supabase.table('user_clothes').select('*').eq('user_id', target_id).eq('clothes_id', c['id']).execute().data
                 if ex:
                     self.send_message(peer_id, "У пользователя уже есть")
                     return
-                supabase.table('user_clothes').insert({'user_id': target_id, 'clothes_id': c['id'], 'equipped': False}).execute()
+                supabase.table('user_clothes').insert({'user_id': target_id, 'clothes_id': c['id'], 'equipped': False, 'slot': slot}).execute()
                 self.send_message(peer_id, f"✅ Выдана {c['name']} {self.make_mention(target_id)}")
                 self.send_message_to_user(target_id, f"🎁 Вам выдали {c['name']}!")
             except Exception as e:
@@ -1006,6 +1069,8 @@ class RichBot:
         
         else:
             self.send_message(peer_id, "Неизвестная команда")
+    
+    # ==================== ОСНОВНОЙ ЦИКЛ ====================
     
     def run(self):
         print("Бот слушает...")
