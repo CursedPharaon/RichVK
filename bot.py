@@ -29,20 +29,11 @@ def health():
 class RichBot:
     def __init__(self):
         print("Запуск бота...")
-        self.vk_session = vk_api.VkApi(token=VK_TOKEN)
-        self.vk = self.vk_session.get_api()
-        self.longpoll = VkLongPoll(self.vk_session)
+        session = vk_api.VkApi(token=VK_TOKEN)
+        self.vk = session.get_api()
+        self.longpoll = VkLongPoll(session)
         self.msg_counter = 0
-        
-        try:
-            groups = self.vk.groups.getById(group_id=None)
-            if groups and len(groups) > 0:
-                self.bot_id = -int(groups[0]['id'])
-            else:
-                self.bot_id = 0
-        except:
-            self.bot_id = 0
-        
+        self.bot_id = 0
         self.start_money = 1000
         self.valid_mafias = ['Братки', 'Мафиози', 'Гангстеры']
         
@@ -53,6 +44,7 @@ class RichBot:
             'официант': {'money': (200, 400), 'energy': 10},
             'шаурмист': {'money': (400, 700), 'energy': 20}
         }
+        
         self.hack_items = [
             {'name': 'Макдональдс', 'chance': 80, 'reward': (100, 300)},
             {'name': 'Магазин', 'chance': 70, 'reward': (300, 600)},
@@ -60,6 +52,7 @@ class RichBot:
             {'name': 'Пентагон', 'chance': 30, 'reward': (5000, 10000)},
             {'name': 'Центробанк', 'chance': 15, 'reward': (15000, 30000)},
         ]
+        
         self.commands = {
             'начать': self.cmd_start, 'баланс': self.cmd_balance, 'помощь': self.cmd_help,
             'работы': self.cmd_jobs, 'работа': self.cmd_work, 'казино': self.cmd_casino,
@@ -75,8 +68,23 @@ class RichBot:
             'ркоин': self.cmd_richcoin, 'купить_ркоин': self.cmd_buy_richcoin, 'продать_ркоин': self.cmd_sell_richcoin,
             'взлом': self.cmd_hack,
         }
+        
         self.name_cache = {}
         print("Бот готов")
+    
+    def get_user_by_username(self, username):
+        """Получить ID пользователя по username (@username)"""
+        try:
+            # Убираем @ если есть
+            username = username.lstrip('@')
+            # Пробуем получить через resolveScreenName
+            result = self.vk.utils.resolveScreenName(screen_name=username)
+            if result and result.get('type') == 'user':
+                return result['object_id']
+            return None
+        except Exception as e:
+            print(f"Ошибка получения пользователя по username: {e}")
+            return None
     
     def get_user_name(self, user_id):
         if user_id in self.name_cache:
@@ -170,26 +178,23 @@ class RichBot:
         return None
     
     def get_id_from_mention(self, text):
+        """Извлекаем ID из @username или @id123"""
         import re
-        # Если текст - просто число (ID)
+        
+        # Если уже число
         if text.isdigit():
             return int(text)
         
-        # Поиск @username (например @durov)
-        match = re.search(r'@(\w+)', text)
-        if match:
-            username = match.group(1)
-            try:
-                user_info = self.vk.utils.resolveScreenName(screen_name=username)
-                if user_info and user_info.get('type') == 'user':
-                    return user_info['object_id']
-            except:
-                pass
-        
-        # Поиск @id12345
+        # Поиск @id123
         match = re.search(r'@id(\d+)', text)
         if match:
             return int(match.group(1))
+        
+        # Поиск @username
+        match = re.search(r'@(\w+)', text)
+        if match:
+            username = match.group(1)
+            return self.get_user_by_username(username)
         
         return None
     
@@ -202,7 +207,7 @@ class RichBot:
         self.send_message(peer_id, f"Баланс {self.make_mention(user_id)}: {self.format_number(u['money'])}\nЭнергия: {u['energy']}%\nУровень: {u['level']}\nРичкоин: {self.format_number(u.get('richcoin', 0))}")
     
     def cmd_help(self, peer_id, user_id, args):
-        self.send_message(peer_id, "КОМАНДЫ:\n!баланс\n!работы\n!работа [название]\n!казино [кости] [ставка]\n!создать_клан [название]\n!вступить [клан]\n!клан\n!покинуть_клан\n!пополнить_клан [сумма]\n!битва_кланов [клан] [ставка]\n!прокачать_клан [атака/защита]\n!мафия\n!вступить_в_мафию [название]\n!покинуть_мафию\n!дуэль @user [ставка]\n!ограбить @user\n!взлом\n!ркоин\n!купить_ркоин [кол-во]\n!продать_ркоин [кол-во]\n!топ\n!передать [сумма]\n!бизнес\n!купитьбизнес [название]\n!собрать\n!шкаф\n!надеть [название]\n!снять [название]")
+        self.send_message(peer_id, "КОМАНДЫ:\n!баланс\n!работы\n!работа [название]\n!казино [кости] [ставка]\n!создать_клан [название]\n!вступить [клан]\n!клан\n!покинуть_клан\n!пополнить_клан [сумма]\n!битва_кланов [клан] [ставка]\n!прокачать_клан [атака/защита]\n!мафия\n!вступить_в_мафию [название]\n!покинуть_мафию\n!дуэль @username [ставка]\n!ограбить @username\n!взлом\n!ркоин\n!купить_ркоин [кол-во]\n!продать_ркоин [кол-во]\n!топ\n!передать @username [сумма]\n!бизнес\n!купитьбизнес [название]\n!собрать\n!шкаф\n!надеть [название]\n!снять [название]")
     
     def cmd_jobs(self, peer_id, user_id, args):
         text = "РАБОТЫ:\n\n"
@@ -505,17 +510,19 @@ class RichBot:
     def cmd_transfer(self, peer_id, user_id, args, reply_id=None):
         target = reply_id
         amount = None
+        
+        # Ищем @username в аргументах
         for a in args:
-            if a.isdigit():
+            if a.startswith('@'):
+                target = self.get_id_from_mention(a)
+            elif a.isdigit():
                 if target is None:
                     target = int(a)
                 else:
                     amount = int(a)
-                    break
-        if target is None and args:
-            target = self.get_id_from_mention(' '.join(args))
+        
         if target is None:
-            self.send_message(peer_id, "Укажите ID или ответьте на сообщение")
+            self.send_message(peer_id, "Укажите пользователя: !передать @username [сумма]")
             return
         if amount is None:
             self.send_message(peer_id, "Укажите сумму")
@@ -538,25 +545,19 @@ class RichBot:
     def cmd_duel(self, peer_id, user_id, args, reply_id=None):
         target = reply_id
         bet = None
-        if target is None and args:
-            for a in args:
-                if a.isdigit():
-                    if bet is None:
-                        bet = int(a)
-                    elif target is None:
-                        target = int(a)
-                elif '@' in a:
-                    target = self.get_id_from_mention(a)
-        if target is None and args:
-            target = self.get_id_from_mention(' '.join(args))
-        if target is None:
-            self.send_message(peer_id, "Укажите соперника: !дуэль @user 1000")
-            return
-        if bet is None:
-            for a in args:
-                if a.isdigit() and (target is None or int(a) != target):
+        
+        for a in args:
+            if a.startswith('@'):
+                target = self.get_id_from_mention(a)
+            elif a.isdigit():
+                if bet is None:
                     bet = int(a)
-                    break
+                elif target is None:
+                    target = int(a)
+        
+        if target is None:
+            self.send_message(peer_id, "Укажите соперника: !дуэль @username [ставка]")
+            return
         if bet is None:
             self.send_message(peer_id, "Укажите ставку")
             return
@@ -617,9 +618,14 @@ class RichBot:
     def cmd_rob(self, peer_id, user_id, args, reply_id=None):
         target = reply_id
         if target is None and args:
-            target = self.get_id_from_mention(' '.join(args))
+            for a in args:
+                if a.startswith('@'):
+                    target = self.get_id_from_mention(a)
+                elif a.isdigit():
+                    target = int(a)
+                    break
         if target is None:
-            self.send_message(peer_id, "!ограбить @user")
+            self.send_message(peer_id, "!ограбить @username")
             return
         if target == user_id:
             self.send_message(peer_id, "Себя нельзя")
@@ -886,26 +892,7 @@ class RichBot:
                 time.sleep(0.05)
             except:
                 pass
-        
-        chats = []
-        try:
-            conv = self.vk.messages.getConversations(filter='all', count=200)
-            for item in conv.get('items', []):
-                pid = item['conversation']['peer']['id']
-                if pid > 2000000000:
-                    chats.append(pid)
-        except:
-            pass
-        
-        for chat_id in chats:
-            try:
-                self.send_message(chat_id, f"📢 РАССЫЛКА ОТ АДМИНА:\n\n{text}")
-                sent += 1
-                time.sleep(0.05)
-            except:
-                pass
-        
-        self.send_message(peer_id, f"✅ Отправлено {sent} получателям")
+        self.send_message(peer_id, f"✅ Отправлено {sent} пользователям")
     
     def cmd_top(self, peer_id, user_id, args):
         users = supabase.table('users').select('user_id, money, level').order('money', desc=True).limit(10).execute().data
@@ -1032,7 +1019,7 @@ class RichBot:
             try:
                 for event in self.longpoll.listen():
                     if event.type == VkEventType.MESSAGE_NEW:
-                        if self.bot_id != 0 and event.user_id == self.bot_id:
+                        if event.user_id == self.bot_id:
                             continue
                         key = f"{event.peer_id}_{event.message_id}"
                         if key in processed:
