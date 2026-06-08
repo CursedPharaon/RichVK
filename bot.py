@@ -37,6 +37,10 @@ class RichBot:
         self.start_money = 1000
         self.valid_mafias = ['Братки', 'Мафиози', 'Гангстеры']
         
+        # ОГРАНИЧЕНИЕ НА КОМАНДЫ - ЗАЩИТА ОТ СПАМА
+        self.command_cooldown = {}  # user_id: last_command_time
+        self.command_limit = 2  # максимум команд в секунду
+        
         self.jobs = {
             'программист': {'money': (500, 1000), 'energy': 20},
             'грузчик': {'money': (200, 500), 'energy': 15},
@@ -70,11 +74,24 @@ class RichBot:
         }
         
         self.name_cache = {}
+        
+        # ПОСЛЕДНИЕ ОБРАБОТАННЫЕ СООБЩЕНИЯ (защита от дублей)
+        self.processed_messages = {}
+        self.processed_expiry = 60  # храним 60 секунд
+        
         print("Бот готов")
+    
+    def check_spam(self, user_id):
+        """Проверка на спам - не более 2 команд в секунду"""
+        now = time.time()
+        if user_id in self.command_cooldown:
+            if now - self.command_cooldown[user_id] < 0.5:  # 0.5 секунды между командами
+                return False
+        self.command_cooldown[user_id] = now
+        return True
     
     def extract_user_id_from_text(self, text):
         """Извлекает ID пользователя из текста (@username или ссылка)"""
-        # Паттерн для @username
         match = re.search(r'@([a-zA-Z0-9_.]+)', text)
         if match:
             username = match.group(1)
@@ -84,30 +101,15 @@ class RichBot:
                     return result['object_id']
             except:
                 pass
-        
-        # Паттерн для [id123|name]
         match = re.search(r'\[id(\d+)\|', text)
         if match:
             return int(match.group(1))
-        
-        # Паттерн для прямой ссылки vk.com/username
-        match = re.search(r'vk\.com/([a-zA-Z0-9_.]+)', text)
-        if match:
-            username = match.group(1)
-            try:
-                result = self.vk.utils.resolveScreenName(screen_name=username)
-                if result and result.get('type') == 'user':
-                    return result['object_id']
-            except:
-                pass
-        
         return None
     
     def get_user_by_username(self, username):
         """Получить ID пользователя по username (@username)"""
         try:
             username = username.lstrip('@')
-            # Очищаем от лишних символов
             username = re.sub(r'[^\w_.]', '', username)
             if not username:
                 return None
@@ -192,6 +194,7 @@ class RichBot:
         try:
             self.msg_counter = (self.msg_counter + 1) % 1000000
             self.vk.messages.send(peer_id=peer_id, message=str(text)[:4000], random_id=self.msg_counter)
+            time.sleep(0.1)  # Небольшая задержка чтобы не спамить API
         except Exception as e:
             print(f"Send error: {e}")
     
@@ -199,6 +202,7 @@ class RichBot:
         try:
             self.msg_counter = (self.msg_counter + 1) % 1000000
             self.vk.messages.send(user_id=user_id, message=str(text)[:4000], random_id=self.msg_counter)
+            time.sleep(0.1)
         except:
             pass
     
@@ -259,6 +263,10 @@ class RichBot:
         self.send_message(peer_id, f"+{self.format_number(earned)}\nЭнергия: {new_energy}%")
     
     def cmd_casino(self, peer_id, user_id, args):
+        # ЗАЩИТА ОТ СПАМА В КАЗИНО
+        if not self.check_spam(user_id):
+            return
+        
         if len(args) < 2 or args[0].lower() != 'кости':
             self.send_message(peer_id, "!казино [кости] [ставка]")
             return
@@ -527,7 +535,6 @@ class RichBot:
         # 1. Сначала проверяем reply (ответ на сообщение)
         if reply_id:
             target_id = reply_id
-            print(f"Перевод по reply: {target_id}")
         
         # 2. Ищем @username в аргументах
         for arg in args:
@@ -535,26 +542,21 @@ class RichBot:
                 found_id = self.get_user_by_username(arg)
                 if found_id:
                     target_id = found_id
-                    print(f"Найден @username: {arg} -> {target_id}")
                     break
         
         # 3. Ищем просто число как ID (если еще не нашли)
         if not target_id:
             for arg in args:
                 if arg.isdigit() and len(arg) >= 5 and len(arg) <= 10:
-                    # Это похоже на ID пользователя ВК
                     target_id = int(arg)
-                    print(f"Найден ID: {target_id}")
                     break
         
         # 4. Ищем сумму (последнее число в аргументах)
         for arg in reversed(args):
             if arg.isdigit() and int(arg) > 0:
-                # Проверяем, не является ли это ID (ID обычно больше 1000)
                 num = int(arg)
                 if not target_id or num != target_id:
                     amount = num
-                    print(f"Найдена сумма: {amount}")
                     break
         
         # Проверки
@@ -587,18 +589,15 @@ class RichBot:
         self.update_user(target_id, {'money': receiver['money'] + amount})
         
         self.send_message(peer_id, f"✅ {self.make_mention(user_id)} перевел {self.make_mention(target_id)} {self.format_number(amount)}")
-        print(f"Перевод выполнен: {user_id} -> {target_id}, сумма: {amount}")
     
     def cmd_duel(self, peer_id, user_id, args, reply_id=None):
         """Дуэль - ИСПРАВЛЕНО"""
         target_id = None
         bet = None
         
-        # 1. Проверяем reply
         if reply_id:
             target_id = reply_id
         
-        # 2. Ищем @username
         for arg in args:
             if arg.startswith('@'):
                 found_id = self.get_user_by_username(arg)
@@ -606,7 +605,6 @@ class RichBot:
                     target_id = found_id
                     break
         
-        # 3. Ищем сумму (число)
         for arg in args:
             if arg.isdigit() and int(arg) > 0:
                 num = int(arg)
@@ -631,13 +629,11 @@ class RichBot:
             return
         
         user = self.get_user(user_id)
-        opponent = self.get_user(target_id)
         
         if bet > user['money']:
             self.send_message(peer_id, f"❌ У вас {self.format_number(user['money'])}, а ставка {self.format_number(bet)}")
             return
         
-        # Проверка на существующую дуэль
         existing = supabase.table('duels').select('*').eq('challenger', user_id).eq('opponent', target_id).eq('status', 'pending').execute().data
         if existing:
             self.send_message(peer_id, "❌ Вы уже вызвали этого игрока на дуэль")
@@ -669,11 +665,9 @@ class RichBot:
             self.send_message(peer_id, f"❌ У вас {self.format_number(opponent['money'])}, а нужно {self.format_number(bet)}")
             return
         
-        # Забираем ставки
         self.update_user(d['challenger'], {'money': challenger['money'] - bet})
         self.update_user(user_id, {'money': opponent['money'] - bet})
         
-        # Битва
         power1 = random.randint(1, 100) + challenger['level'] * 5
         power2 = random.randint(1, 100) + opponent['level'] * 5
         
@@ -711,11 +705,9 @@ class RichBot:
         """Ограбление - ИСПРАВЛЕНО"""
         target_id = None
         
-        # 1. Проверяем reply
         if reply_id:
             target_id = reply_id
         
-        # 2. Ищем @username
         for arg in args:
             if arg.startswith('@'):
                 found_id = self.get_user_by_username(arg)
@@ -1092,21 +1084,31 @@ class RichBot:
     def run(self):
         print("Бот слушает...")
         processed = set()
+        last_cleanup = time.time()
+        
         while True:
             try:
                 for event in self.longpoll.listen():
                     if event.type == VkEventType.MESSAGE_NEW:
                         if event.user_id == self.bot_id:
                             continue
-                        key = f"{event.peer_id}_{event.message_id}"
-                        if key in processed:
+                        
+                        # Защита от дублей сообщений
+                        msg_key = f"{event.peer_id}_{event.message_id}"
+                        if msg_key in processed:
                             continue
-                        processed.add(key)
-                        if len(processed) > 500:
+                        processed.add(msg_key)
+                        
+                        # Очистка кеша каждые 5 минут
+                        if time.time() - last_cleanup > 300:
                             processed.clear()
+                            last_cleanup = time.time()
+                        
                         text = event.text.strip()
                         if not text:
                             continue
+                        
+                        # Только команды с ! или в ЛС
                         if event.peer_id == event.user_id or text.startswith('!'):
                             if text.startswith('!'):
                                 text = text[1:]
@@ -1116,6 +1118,7 @@ class RichBot:
                             cmd = parts[0]
                             args = parts[1:]
                             reply = self.get_reply_id(event)
+                            
                             try:
                                 if cmd == 'передать':
                                     self.cmd_transfer(event.peer_id, event.user_id, args, reply)
@@ -1125,11 +1128,9 @@ class RichBot:
                                     self.cmd_rob(event.peer_id, event.user_id, args, reply)
                                 elif cmd in self.commands:
                                     self.commands[cmd](event.peer_id, event.user_id, args)
+                                # Игнорируем остальной текст
                             except Exception as e:
                                 print(f"Ошибка в команде {cmd}: {e}")
-                                import traceback
-                                traceback.print_exc()
-                                self.send_message(event.peer_id, "❌ Ошибка при выполнении команды")
             except Exception as e:
                 print(f"Longpoll error: {e}")
                 time.sleep(5)
